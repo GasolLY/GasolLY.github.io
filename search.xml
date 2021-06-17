@@ -1,13 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <search>
   <entry>
+    <title>About Me</title>
+    <url>/2021/06/17/About-Me/</url>
+    <content><![CDATA[<blockquote>
+<p>Done is better than perfect.</p>
+</blockquote>
+<p>姓名：潘许飞 - Gasol</p>
+<p>学习/工作：HUST - WNLO</p>
+<p>邮箱：<a href="mailto:&#x31;&#x31;&#x34;&#x32;&#56;&#x31;&#x32;&#x35;&#x32;&#x35;&#64;&#113;&#113;&#46;&#x63;&#111;&#109;">&#x31;&#x31;&#x34;&#x32;&#56;&#x31;&#x32;&#x35;&#x32;&#x35;&#64;&#113;&#113;&#46;&#x63;&#111;&#109;</a></p>
+<p><img src="https://pic.imgdb.cn/item/60cb0de4844ef46bb21f61a5.jpg"></p>
+]]></content>
+      <tags>
+        <tag>随笔</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>SPDK调研</title>
     <url>/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</url>
     <content><![CDATA[<h2 id="一．SPDK简介"><a href="#一．SPDK简介" class="headerlink" title="一．SPDK简介"></a>一．SPDK简介</h2><h3 id="1-SPDK的起源"><a href="#1-SPDK的起源" class="headerlink" title="1.SPDK的起源"></a>1.SPDK的起源</h3><p>固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。</p>
 <p>用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。</p>
+<span id="more"></span>
 <p>为了帮助存储OEM（设备代工厂）和ISV（独立软件开发商）整合硬件，Intel构造了一系列驱动，以及一个完善的、端对端的参考存储体系结构，被命名为Storage Performance Development Kit（SPDK）。SPDK的目标是通过同时使用Intel的网络技术，处理技术和存储技术来提高突出显著的效率和性能。通过运行为硬件设计的软件，SPDK已经证明很容易达到每秒钟数百万次I/O读取，通过使用许多处理器核心和许多NVMe驱动去存储，而不需要额外卸载硬件。Intel在BSD license许可协议下通过Github分发提供其全部的Linux参考架构的源代码。博客、邮件列表和额外文档可以在spdk.io中找到。</p>
 <h3 id="2-SPDK的整体架构"><a href="#2-SPDK的整体架构" class="headerlink" title="2.SPDK的整体架构"></a>2.SPDK的整体架构</h3><p>下图为SPDK的整体架构图：</p>
-<p><img src="https://github.com/GasolLY/images/blob/main/spdkArch.png" alt="SPDK架构图"></p>
+<p><img src="https://pic.imgdb.cn/item/60cb0904844ef46bb2ee63d9.png" alt="SPDK架构图"></p>
 <p>按照自底层向上层的顺序，分为：</p>
 <ul>
 <li><p>硬件驱动</p>
@@ -68,12 +84,12 @@
 <p>SPDK的基础是用户空间，轮询模式，异步，无锁的NVMe驱动程序。这提供了零拷贝，高度并行的访问，可从用户空间应用程序直接访问SSD。该驱动程序被编写为具有单个公共标头的C库。</p>
 <p>SPDK还提供了完整的块堆栈作为用户空间库，该库执行与操作系统中的块堆栈相同的许多操作。这包括统一不同存储设备之间的接口，排队以处理诸如内存不足或I / O挂起之类的情况以及逻辑卷管理。</p>
 <p>最后，SPDK在这些组件之上提供了NVMe-oF，iSCSI和虚拟主机服务器，这些服务器能够通过网络或其他进程为磁盘提供服务。用于NVMe-oF和iSCSI的标准Linux内核启动器可与这些目标以及具有vhost的QEMU进行交互。与其他实现相比，这些服务器的CPU效率最高可提高一个数量级。这些目标可以用作如何实现高性能存储目标的示例，也可以用作生产部署的基础。</p>
-<p><img src="https://github.com/GasolLY/images/blob/main/spdkIOStack.png" alt="SPDK IO Stack"></p>
+<p><img src="https://pic.imgdb.cn/item/60cb0920844ef46bb2ef7f97.png" alt="SPDK IO Stack"></p>
 <h2 id="三．SPDK关键技术介绍"><a href="#三．SPDK关键技术介绍" class="headerlink" title="三．SPDK关键技术介绍"></a>三．SPDK关键技术介绍</h2><h3 id="1-NVMe-Driver"><a href="#1-NVMe-Driver" class="headerlink" title="1.NVMe Driver"></a>1.NVMe Driver</h3><p>（1）NVMe Driver整体情况介绍</p>
 <p>NVMe驱动程序是一个C语言库，可以直接链接到一个应用程序中，该应用程序对外提供与NVMe SSD的直接的、零拷贝数据传输。它是完全被动的，这意味着它不产生任何线程，并且仅响应于来自应用程序本身的函数调用而执行操作。该库通过直接将PCI BAR映射到本地进程并执行MMIO来控制NVMe设备。I / O是通过队列对异步提交的。</p>
 <p>最近，对该库进行了改进，使其还可以通过基于Fabric的NVMe连接到远程NVMe设备。用户现在既可以通过本地PCI总线也可以通过NVMe over Fabrics，调用spdk_nvme_probe（），发现设备。</p>
 <p>NVMe Driver的公共接口声明于spdk/nvme.h中。主要包括如下命令：</p>
-<p><img src="https://github.com/GasolLY/images/blob/main/spdkNVMeAPI.png" alt="SPDK NVMe API"></p>
+<p><img src="https://pic.imgdb.cn/item/60cb093d844ef46bb2f0a087.png" alt="SPDK NVMe API"></p>
 <p>（2）NVMe Driver关于IO提交的设计</p>
 <p>NVMe Driver使用nvme_ns_cmd_xxx命令将IO提交到NVMe命名空间。NVMe驱动程序在命令中指定的队列对上将I / O请求作为NVMe提交队列条目提交。函数会立即返回，在IO命令完成之前就已经返回。应用程序必须通过调用spdk_nvme_qpair_process_completions函数轮询队列对，以接收完成回调。</p>
 <p>（3）NVMe Driver对于拓展性的支持</p>
@@ -100,6 +116,7 @@
     <title>Hello World</title>
     <url>/2021/06/12/hello-world/</url>
     <content><![CDATA[<p>Welcome to <a href="https://hexo.io/">Hexo</a>! This is your very first post. Check <a href="https://hexo.io/docs/">documentation</a> for more info. If you get any problems when using Hexo, you can find the answer in <a href="https://hexo.io/docs/troubleshooting.html">troubleshooting</a> or you can ask me on <a href="https://github.com/hexojs/hexo/issues">GitHub</a>.</p>
+<span id="more"></span>
 <h2 id="Quick-Start"><a href="#Quick-Start" class="headerlink" title="Quick Start"></a>Quick Start</h2><h3 id="Create-a-new-post"><a href="#Create-a-new-post" class="headerlink" title="Create a new post"></a>Create a new post</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo new <span class="string">&quot;My New Post&quot;</span></span><br></pre></td></tr></table></figure>
 
 <p>More info: <a href="https://hexo.io/docs/writing.html">Writing</a></p>

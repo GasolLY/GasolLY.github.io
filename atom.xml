@@ -3,11 +3,11 @@
   <title>Gasol</title>
   
   
-  <link href="http://example.com/atom.xml" rel="self"/>
+  <link href="http://gasolly.github.io/atom.xml" rel="self"/>
   
-  <link href="http://example.com/"/>
-  <updated>2021-06-17T07:57:50.650Z</updated>
-  <id>http://example.com/</id>
+  <link href="http://gasolly.github.io/"/>
+  <updated>2021-06-17T08:55:10.067Z</updated>
+  <id>http://gasolly.github.io/</id>
   
   <author>
     <name>Xufei Pan</name>
@@ -17,47 +17,64 @@
   <generator uri="https://hexo.io/">Hexo</generator>
   
   <entry>
+    <title>About Me</title>
+    <link href="http://gasolly.github.io/2021/06/17/About-Me/"/>
+    <id>http://gasolly.github.io/2021/06/17/About-Me/</id>
+    <published>2021-06-17T08:39:22.000Z</published>
+    <updated>2021-06-17T08:55:10.067Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;blockquote&gt;
+&lt;p&gt;Done is better than perfect.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;姓名：潘许飞 - Gasol&lt;/p&gt;
+&lt;p&gt;学习/工作：HUST - WNLO&lt;/p&gt;
+&lt;p&gt;邮箱：&lt;a</summary>
+        
+      
+    
+    
+    
+    
+    <category term="随笔" scheme="http://gasolly.github.io/tags/%E9%9A%8F%E7%AC%94/"/>
+    
+  </entry>
+  
+  <entry>
     <title>SPDK调研</title>
-    <link href="http://example.com/2021/06/17/SPDK%E8%B0%83%E7%A0%94/"/>
-    <id>http://example.com/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</id>
+    <link href="http://gasolly.github.io/2021/06/17/SPDK%E8%B0%83%E7%A0%94/"/>
+    <id>http://gasolly.github.io/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</id>
     <published>2021-06-17T05:44:41.000Z</published>
-    <updated>2021-06-17T07:57:50.650Z</updated>
+    <updated>2021-06-17T08:35:30.526Z</updated>
     
     
-      
-      
-        
-        
-    <summary type="html">&lt;h2 id=&quot;一．SPDK简介&quot;&gt;&lt;a href=&quot;#一．SPDK简介&quot; class=&quot;headerlink&quot; title=&quot;一．SPDK简介&quot;&gt;&lt;/a&gt;一．SPDK简介&lt;/h2&gt;&lt;h3 id=&quot;1-SPDK的起源&quot;&gt;&lt;a href=&quot;#1-SPDK的起源&quot;</summary>
-        
-      
+    <summary type="html">&lt;h2 id=&quot;一．SPDK简介&quot;&gt;&lt;a href=&quot;#一．SPDK简介&quot; class=&quot;headerlink&quot; title=&quot;一．SPDK简介&quot;&gt;&lt;/a&gt;一．SPDK简介&lt;/h2&gt;&lt;h3 id=&quot;1-SPDK的起源&quot;&gt;&lt;a href=&quot;#1-SPDK的起源&quot; class=&quot;headerlink&quot; title=&quot;1.SPDK的起源&quot;&gt;&lt;/a&gt;1.SPDK的起源&lt;/h3&gt;&lt;p&gt;固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。&lt;/p&gt;
+&lt;p&gt;用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。&lt;/p&gt;</summary>
     
     
     
-    <category term="学习" scheme="http://example.com/categories/%E5%AD%A6%E4%B9%A0/"/>
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
     
-    <category term="SPDK" scheme="http://example.com/categories/%E5%AD%A6%E4%B9%A0/SPDK/"/>
+    <category term="SPDK" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/SPDK/"/>
     
     
-    <category term="SPDK" scheme="http://example.com/tags/SPDK/"/>
+    <category term="SPDK" scheme="http://gasolly.github.io/tags/SPDK/"/>
     
   </entry>
   
   <entry>
     <title>Hello World</title>
-    <link href="http://example.com/2021/06/12/hello-world/"/>
-    <id>http://example.com/2021/06/12/hello-world/</id>
+    <link href="http://gasolly.github.io/2021/06/12/hello-world/"/>
+    <id>http://gasolly.github.io/2021/06/12/hello-world/</id>
     <published>2021-06-12T07:56:43.225Z</published>
-    <updated>2021-06-12T07:56:43.226Z</updated>
+    <updated>2021-06-17T08:29:17.397Z</updated>
     
     
-      
-      
-        
-        
-    <summary type="html">&lt;p&gt;Welcome to &lt;a href=&quot;https://hexo.io/&quot;&gt;Hexo&lt;/a&gt;! This is your very first post. Check &lt;a href=&quot;https://hexo.io/docs/&quot;&gt;documentation&lt;/a&gt;</summary>
-        
-      
+    <summary type="html">&lt;p&gt;Welcome to &lt;a href=&quot;https://hexo.io/&quot;&gt;Hexo&lt;/a&gt;! This is your very first post. Check &lt;a href=&quot;https://hexo.io/docs/&quot;&gt;documentation&lt;/a&gt; for more info. If you get any problems when using Hexo, you can find the answer in &lt;a href=&quot;https://hexo.io/docs/troubleshooting.html&quot;&gt;troubleshooting&lt;/a&gt; or you can ask me on &lt;a href=&quot;https://github.com/hexojs/hexo/issues&quot;&gt;GitHub&lt;/a&gt;.&lt;/p&gt;</summary>
     
     
     
