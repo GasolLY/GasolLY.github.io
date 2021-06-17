@@ -8,7 +8,7 @@
 </blockquote>
 <p>姓名：潘许飞 - Gasol</p>
 <p>学习/工作：HUST - WNLO</p>
-<p>邮箱：<a href="mailto:&#49;&#49;&#x34;&#x32;&#x38;&#49;&#50;&#53;&#x32;&#x35;&#x40;&#x71;&#x71;&#x2e;&#x63;&#x6f;&#109;">&#49;&#49;&#x34;&#x32;&#x38;&#49;&#50;&#53;&#x32;&#x35;&#x40;&#x71;&#x71;&#x2e;&#x63;&#x6f;&#109;</a></p>
+<p>邮箱：<a href="mailto:&#49;&#49;&#x34;&#x32;&#x38;&#49;&#50;&#53;&#x32;&#x35;&#x40;&#113;&#x71;&#46;&#x63;&#x6f;&#109;">&#49;&#49;&#x34;&#x32;&#x38;&#49;&#50;&#53;&#x32;&#x35;&#x40;&#113;&#x71;&#46;&#x63;&#x6f;&#109;</a></p>
 <p><img src="https://pic.imgdb.cn/item/60cb0de4844ef46bb21f61a5.jpg"></p>
 ]]></content>
       <tags>
@@ -19,9 +19,9 @@
     <title>SPDK调研</title>
     <url>/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</url>
     <content><![CDATA[<h2 id="一．SPDK简介"><a href="#一．SPDK简介" class="headerlink" title="一．SPDK简介"></a>一．SPDK简介</h2><h3 id="1-SPDK的起源"><a href="#1-SPDK的起源" class="headerlink" title="1.SPDK的起源"></a>1.SPDK的起源</h3><p>固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。</p>
-<span id="more"></span>
 <p>用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。</p>
 <p>为了帮助存储OEM（设备代工厂）和ISV（独立软件开发商）整合硬件，Intel构造了一系列驱动，以及一个完善的、端对端的参考存储体系结构，被命名为Storage Performance Development Kit（SPDK）。SPDK的目标是通过同时使用Intel的网络技术，处理技术和存储技术来提高突出显著的效率和性能。通过运行为硬件设计的软件，SPDK已经证明很容易达到每秒钟数百万次I/O读取，通过使用许多处理器核心和许多NVMe驱动去存储，而不需要额外卸载硬件。Intel在BSD license许可协议下通过Github分发提供其全部的Linux参考架构的源代码。博客、邮件列表和额外文档可以在spdk.io中找到。</p>
+<span id="more"></span>
 <h3 id="2-SPDK的整体架构"><a href="#2-SPDK的整体架构" class="headerlink" title="2.SPDK的整体架构"></a>2.SPDK的整体架构</h3><p>下图为SPDK的整体架构图：</p>
 <p><img src="https://pic.imgdb.cn/item/60cb0904844ef46bb2ee63d9.png" alt="SPDK架构图"></p>
 <p>按照自底层向上层的顺序，分为：</p>
@@ -109,7 +109,9 @@
         <category>SPDK</category>
       </categories>
       <tags>
-        <tag>SPDK OCSSD 用户态IO</tag>
+        <tag>SPDK</tag>
+        <tag>OCSSD</tag>
+        <tag>用户态IO</tag>
       </tags>
   </entry>
   <entry>
@@ -171,7 +173,8 @@
         <category>QEMU</category>
       </categories>
       <tags>
-        <tag>OCSSD QEMU</tag>
+        <tag>OCSSD</tag>
+        <tag>QEMU</tag>
       </tags>
   </entry>
   <entry>
