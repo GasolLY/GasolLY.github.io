@@ -6,7 +6,7 @@
   <link href="http://example.com/atom.xml" rel="self"/>
   
   <link href="http://example.com/"/>
-  <updated>2021-06-12T07:56:43.226Z</updated>
+  <updated>2021-06-17T07:57:50.650Z</updated>
   <id>http://example.com/</id>
   
   <author>
@@ -15,6 +15,33 @@
   </author>
   
   <generator uri="https://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title>SPDK调研</title>
+    <link href="http://example.com/2021/06/17/SPDK%E8%B0%83%E7%A0%94/"/>
+    <id>http://example.com/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</id>
+    <published>2021-06-17T05:44:41.000Z</published>
+    <updated>2021-06-17T07:57:50.650Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;h2 id=&quot;一．SPDK简介&quot;&gt;&lt;a href=&quot;#一．SPDK简介&quot; class=&quot;headerlink&quot; title=&quot;一．SPDK简介&quot;&gt;&lt;/a&gt;一．SPDK简介&lt;/h2&gt;&lt;h3 id=&quot;1-SPDK的起源&quot;&gt;&lt;a href=&quot;#1-SPDK的起源&quot;</summary>
+        
+      
+    
+    
+    
+    <category term="学习" scheme="http://example.com/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="SPDK" scheme="http://example.com/categories/%E5%AD%A6%E4%B9%A0/SPDK/"/>
+    
+    
+    <category term="SPDK" scheme="http://example.com/tags/SPDK/"/>
+    
+  </entry>
   
   <entry>
     <title>Hello World</title>

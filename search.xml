@@ -1,6 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
 <search>
   <entry>
+    <title>SPDK调研</title>
+    <url>/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</url>
+    <content><![CDATA[<h2 id="一．SPDK简介"><a href="#一．SPDK简介" class="headerlink" title="一．SPDK简介"></a>一．SPDK简介</h2><h3 id="1-SPDK的起源"><a href="#1-SPDK的起源" class="headerlink" title="1.SPDK的起源"></a>1.SPDK的起源</h3><p>固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。</p>
+<p>用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。</p>
+<p>为了帮助存储OEM（设备代工厂）和ISV（独立软件开发商）整合硬件，Intel构造了一系列驱动，以及一个完善的、端对端的参考存储体系结构，被命名为Storage Performance Development Kit（SPDK）。SPDK的目标是通过同时使用Intel的网络技术，处理技术和存储技术来提高突出显著的效率和性能。通过运行为硬件设计的软件，SPDK已经证明很容易达到每秒钟数百万次I/O读取，通过使用许多处理器核心和许多NVMe驱动去存储，而不需要额外卸载硬件。Intel在BSD license许可协议下通过Github分发提供其全部的Linux参考架构的源代码。博客、邮件列表和额外文档可以在spdk.io中找到。</p>
+<h3 id="2-SPDK的整体架构"><a href="#2-SPDK的整体架构" class="headerlink" title="2.SPDK的整体架构"></a>2.SPDK的整体架构</h3><p>下图为SPDK的整体架构图：</p>
+<p><img src="https://github.com/GasolLY/images/blob/main/spdkArch.png" alt="SPDK架构图"></p>
+<p>按照自底层向上层的顺序，分为：</p>
+<ul>
+<li><p>硬件驱动</p>
+<blockquote>
+<p>NVMe Driver：SPDK的基础组件，这个高优化无锁的驱动提供了高扩展性，高效性和高性能。</p>
+</blockquote>
+<blockquote>
+<p>Inter QuickData Technology：也称为Intel I/O Acceleration Technology（Inter IOAT，英特尔I/O加速技术），这是一种基于Xeon处理器平台上的copy offload引擎。通过提供用户空间访问，减少了DMA数据移动的阈值，允许对小尺寸I/O或NTB的更好利用。</p>
+</blockquote>
+</li>
+<li><p>后端块设备</p>
+<blockquote>
+<p>NVMe over Fabrics（NVMe-oF）initiator：从程序员的角度来看，本地SPDK NVMe驱动和NVMe-oF启动器共享一套共同的API命令。这意味着，本地/远程复制非常容易实现。</p>
+</blockquote>
+<blockquote>
+<p>Ceph RADOS Block Device（RBD）：使Ceph成为SPDK的后端设备，比如这可能允许Ceph用作另一个存储层。</p>
+</blockquote>
+<blockquote>
+<p>Blobstore Block Device：由SPDK Blobstore分配的块设备，是虚拟机或数据库可以与之交互的虚拟设备。这些设备享有SPDK基础架构的优势，这意味着零锁定和令人难以置信的可扩展性能。</p>
+</blockquote>
+<blockquote>
+<p>Linux Asynchrounous I/O（AIO）：允许SPDK与内核设备（比如机械硬盘）交互。</p>
+</blockquote>
+</li>
+<li><p>存储服务</p>
+<blockquote>
+<p>Block device abstration layer（bdev）：这种通用的块设备抽象是连接到各种不同设备驱动和块设备的存储协议的粘合剂。还在块层中提供灵活的API用于额外的用户功能（磁盘阵列，压缩，去冗等等）。</p>
+</blockquote>
+<blockquote>
+<p>Blobstore：为SPDK实现一个高精简的文件式语义（非POSIX）。这可以为数据库，容器，虚拟机或其他不依赖于大部分POSIX文件系统功能集（比如用户访问控制）的工作负载提供高性能基础。</p>
+</blockquote>
+</li>
+<li><p>存储协议</p>
+<blockquote>
+<p>iSCSI target：建立了通过以太网的块流量规范，大约是内核LIO效率的两倍。现在的版本默认使用内核TCP/IP协议栈。</p>
+</blockquote>
+<blockquote>
+<p>NVMe-oF target：实现了新NVMe-oF规范。虽然这取决于RDMA硬件，NVMe-oF的目标可以为每个CPU核提供高达40Gbps的流量。</p>
+</blockquote>
+<blockquote>
+<p>vhost-scsi target：KVM/QEMU的功能利用了SPDK NVMe驱动，使得访客虚拟机访问存储设备时延迟更低，使得I/O密集型工作负载的整体CPU负载减低。</p>
+</blockquote>
+</li>
+</ul>
+<h2 id="二、SPDK的主要优势与关键技术"><a href="#二、SPDK的主要优势与关键技术" class="headerlink" title="二、SPDK的主要优势与关键技术"></a>二、SPDK的主要优势与关键技术</h2><h3 id="1-SPDK的主要优势与关键技术"><a href="#1-SPDK的主要优势与关键技术" class="headerlink" title="1.SPDK的主要优势与关键技术"></a>1.SPDK的主要优势与关键技术</h3><p>SPDK具有的优势主要包括：</p>
+<blockquote>
+<p>高性能、高拓展性、零拷贝、高度并行的访问、可以从用户空间直接访问SSD。</p>
+</blockquote>
+<p>SPDK通过使用多种关键技术来实现高性能：</p>
+<ul>
+<li><p>将所有必要的驱动程序移到用户空间中，这避免了系统调用，并允许从应用程序进行零拷贝访问。</p>
+</li>
+<li><p>通过轮询硬件来完成而不是依赖中断，这可以降低总延迟和延迟差异。</p>
+</li>
+<li><p>避免所有在I / O路径中的锁，而是依靠消息传递。</p>
+</li>
+</ul>
+<p>SPDK的基础是用户空间，轮询模式，异步，无锁的NVMe驱动程序。这提供了零拷贝，高度并行的访问，可从用户空间应用程序直接访问SSD。该驱动程序被编写为具有单个公共标头的C库。</p>
+<p>SPDK还提供了完整的块堆栈作为用户空间库，该库执行与操作系统中的块堆栈相同的许多操作。这包括统一不同存储设备之间的接口，排队以处理诸如内存不足或I / O挂起之类的情况以及逻辑卷管理。</p>
+<p>最后，SPDK在这些组件之上提供了NVMe-oF，iSCSI和虚拟主机服务器，这些服务器能够通过网络或其他进程为磁盘提供服务。用于NVMe-oF和iSCSI的标准Linux内核启动器可与这些目标以及具有vhost的QEMU进行交互。与其他实现相比，这些服务器的CPU效率最高可提高一个数量级。这些目标可以用作如何实现高性能存储目标的示例，也可以用作生产部署的基础。</p>
+<p><img src="https://github.com/GasolLY/images/blob/main/spdkIOStack.png" alt="SPDK IO Stack"></p>
+<h2 id="三．SPDK关键技术介绍"><a href="#三．SPDK关键技术介绍" class="headerlink" title="三．SPDK关键技术介绍"></a>三．SPDK关键技术介绍</h2><h3 id="1-NVMe-Driver"><a href="#1-NVMe-Driver" class="headerlink" title="1.NVMe Driver"></a>1.NVMe Driver</h3><p>（1）NVMe Driver整体情况介绍</p>
+<p>NVMe驱动程序是一个C语言库，可以直接链接到一个应用程序中，该应用程序对外提供与NVMe SSD的直接的、零拷贝数据传输。它是完全被动的，这意味着它不产生任何线程，并且仅响应于来自应用程序本身的函数调用而执行操作。该库通过直接将PCI BAR映射到本地进程并执行MMIO来控制NVMe设备。I / O是通过队列对异步提交的。</p>
+<p>最近，对该库进行了改进，使其还可以通过基于Fabric的NVMe连接到远程NVMe设备。用户现在既可以通过本地PCI总线也可以通过NVMe over Fabrics，调用spdk_nvme_probe（），发现设备。</p>
+<p>NVMe Driver的公共接口声明于spdk/nvme.h中。主要包括如下命令：</p>
+<p><img src="https://github.com/GasolLY/images/blob/main/spdkNVMeAPI.png" alt="SPDK NVMe API"></p>
+<p>（2）NVMe Driver关于IO提交的设计</p>
+<p>NVMe Driver使用nvme_ns_cmd_xxx命令将IO提交到NVMe命名空间。NVMe驱动程序在命令中指定的队列对上将I / O请求作为NVMe提交队列条目提交。函数会立即返回，在IO命令完成之前就已经返回。应用程序必须通过调用spdk_nvme_qpair_process_completions函数轮询队列对，以接收完成回调。</p>
+<p>（3）NVMe Driver对于拓展性的支持</p>
+<p>NVMe队列对（结构spdk_nvme_qpair）为I / O提供并行提交路径。I / O可以同时从不同的线程在多个队列对上提交。队列对不包含锁或原子，因此，给定的队列对一次只能由单个线程使用。NVMe驱动程序不强制执行此要求（这样做将需要锁定），并且违反此要求将导致未定义的行为。</p>
+<p>允许的队列对数由NVMe SSD本身决定。该规范可以支持数千个，但是大多数设备支持32至128个。该规范不能保证每个队列对的性能，但是实际上，仅使用一个队列对就几乎可以实现设备的全部性能。例如，如果设备声称能够在队列深度128的情况下，每秒达到450,000 I / O，那么实际上驱动程序使用的是4个队列对（每个队列深度为32）还是单个队列对（队列深度为） 128则无关紧要。</p>
+<p>鉴于以上所述，使用SPDK的应用程序最简单的线程模型是在池中生成固定数量的线程，并将单个NVMe队列对专用于每个线程。进一步的改进是将每个线程固定到一个单独的CPU内核，并且SPDK文档通常会互换使用“ CPU内核”和“线程”，因为我们牢记了这种线程模型。</p>
+<p>NVMe驱动程序不对I / O路径进行任何锁定，因此只要每个新线程专用一个队列对和CPU内核，它就可以根据每个线程的性能进行线性扩展。为了充分利用这种扩展，应用程序应考虑组织其内部数据结构，以便将数据专门分配给单个线程。所有需要数据的操作都应通过向拥有线程发送请求来完成。与锁定体系结构相比，这导致了消息传递体系结构，并且将导致跨CPU内核的出色扩展。</p>
+<h2 id="四．参考资料"><a href="#四．参考资料" class="headerlink" title="四．参考资料"></a>四．参考资料</h2><blockquote>
+<p>1.Intel官网：《Introduction to the Storage Performance Development Kit (SPDK)》；链接：<a href="https://software.intel.com/content/www/cn/zh/develop/articles/introduction-to-the-storage-performance-development-kit-spdk.html?wapkw=spdk">https://software.intel.com/content/www/cn/zh/develop/articles/introduction-to-the-storage-performance-development-kit-spdk.html?wapkw=spdk</a></p>
+</blockquote>
+<blockquote>
+<p>2.SPDK文档；链接：<a href="https://spdk.io/doc/about.html">https://spdk.io/doc/about.html</a></p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>学习</category>
+        <category>SPDK</category>
+      </categories>
+      <tags>
+        <tag>SPDK</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Hello World</title>
     <url>/2021/06/12/hello-world/</url>
     <content><![CDATA[<p>Welcome to <a href="https://hexo.io/">Hexo</a>! This is your very first post. Check <a href="https://hexo.io/docs/">documentation</a> for more info. If you get any problems when using Hexo, you can find the answer in <a href="https://hexo.io/docs/troubleshooting.html">troubleshooting</a> or you can ask me on <a href="https://github.com/hexojs/hexo/issues">GitHub</a>.</p>
