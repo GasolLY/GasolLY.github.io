@@ -8,7 +8,7 @@
 </blockquote>
 <p>姓名：潘许飞 - Gasol</p>
 <p>学习/工作：HUST - WNLO</p>
-<p>邮箱：<a href="mailto:&#x31;&#49;&#52;&#x32;&#56;&#49;&#50;&#53;&#x32;&#53;&#64;&#x71;&#113;&#x2e;&#x63;&#x6f;&#109;">&#x31;&#49;&#52;&#x32;&#56;&#49;&#50;&#53;&#x32;&#53;&#64;&#x71;&#113;&#x2e;&#x63;&#x6f;&#109;</a></p>
+<p>邮箱：<a href="mailto:&#49;&#49;&#x34;&#x32;&#x38;&#49;&#50;&#53;&#x32;&#x35;&#x40;&#x71;&#x71;&#x2e;&#x63;&#x6f;&#109;">&#49;&#49;&#x34;&#x32;&#x38;&#49;&#50;&#53;&#x32;&#x35;&#x40;&#x71;&#x71;&#x2e;&#x63;&#x6f;&#109;</a></p>
 <p><img src="https://pic.imgdb.cn/item/60cb0de4844ef46bb21f61a5.jpg"></p>
 ]]></content>
       <tags>
@@ -19,8 +19,8 @@
     <title>SPDK调研</title>
     <url>/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</url>
     <content><![CDATA[<h2 id="一．SPDK简介"><a href="#一．SPDK简介" class="headerlink" title="一．SPDK简介"></a>一．SPDK简介</h2><h3 id="1-SPDK的起源"><a href="#1-SPDK的起源" class="headerlink" title="1.SPDK的起源"></a>1.SPDK的起源</h3><p>固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。</p>
-<p>用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。</p>
 <span id="more"></span>
+<p>用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。</p>
 <p>为了帮助存储OEM（设备代工厂）和ISV（独立软件开发商）整合硬件，Intel构造了一系列驱动，以及一个完善的、端对端的参考存储体系结构，被命名为Storage Performance Development Kit（SPDK）。SPDK的目标是通过同时使用Intel的网络技术，处理技术和存储技术来提高突出显著的效率和性能。通过运行为硬件设计的软件，SPDK已经证明很容易达到每秒钟数百万次I/O读取，通过使用许多处理器核心和许多NVMe驱动去存储，而不需要额外卸载硬件。Intel在BSD license许可协议下通过Github分发提供其全部的Linux参考架构的源代码。博客、邮件列表和额外文档可以在spdk.io中找到。</p>
 <h3 id="2-SPDK的整体架构"><a href="#2-SPDK的整体架构" class="headerlink" title="2.SPDK的整体架构"></a>2.SPDK的整体架构</h3><p>下图为SPDK的整体架构图：</p>
 <p><img src="https://pic.imgdb.cn/item/60cb0904844ef46bb2ee63d9.png" alt="SPDK架构图"></p>
@@ -91,7 +91,7 @@
 <p>NVMe Driver的公共接口声明于spdk/nvme.h中。主要包括如下命令：</p>
 <p><img src="https://pic.imgdb.cn/item/60cb093d844ef46bb2f0a087.png" alt="SPDK NVMe API"></p>
 <p>（2）NVMe Driver关于IO提交的设计</p>
-<p>NVMe Driver使用nvme_ns_cmd_xxx命令将IO提交到NVMe命名空间。NVMe驱动程序在命令中指定的队列对上将I / O请求作为NVMe提交队列条目提交。函数会立即返回，在IO命令完成之前就已经返回。应用程序必须通过调用spdk_nvme_qpair_process_completions函数轮询队列对，以接收完成回调。</p>
+<p>NVMe Driver使用nvme_ns_cmd_xxx命令将IO提交到NVMe命名空间。NVMe驱动程序在命令中指定的队列对上将I / O请求作为NVMe提交队列条目提交。函数会立即返回，在IO命令完成之前就已经返回。应用程序必须通过调用<code>spdk_nvme_qpair_process_completions()</code>函数轮询队列对，以接收完成回调。</p>
 <p>（3）NVMe Driver对于拓展性的支持</p>
 <p>NVMe队列对（结构spdk_nvme_qpair）为I / O提供并行提交路径。I / O可以同时从不同的线程在多个队列对上提交。队列对不包含锁或原子，因此，给定的队列对一次只能由单个线程使用。NVMe驱动程序不强制执行此要求（这样做将需要锁定），并且违反此要求将导致未定义的行为。</p>
 <p>允许的队列对数由NVMe SSD本身决定。该规范可以支持数千个，但是大多数设备支持32至128个。该规范不能保证每个队列对的性能，但是实际上，仅使用一个队列对就几乎可以实现设备的全部性能。例如，如果设备声称能够在队列深度128的情况下，每秒达到450,000 I / O，那么实际上驱动程序使用的是4个队列对（每个队列深度为32）还是单个队列对（队列深度为） 128则无关紧要。</p>
@@ -109,7 +109,69 @@
         <category>SPDK</category>
       </categories>
       <tags>
-        <tag>SPDK</tag>
+        <tag>SPDK OCSSD 用户态IO</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Virtual OCSSD 环境搭建</title>
+    <url>/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/</url>
+    <content><![CDATA[<h2 id="一、Virtual-OpenChannel-SSD-环境配置"><a href="#一、Virtual-OpenChannel-SSD-环境配置" class="headerlink" title="一、Virtual OpenChannel SSD 环境配置"></a>一、Virtual OpenChannel SSD 环境配置</h2><p>1.下载Qemu-nvme的源码</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">git <span class="built_in">clone</span> https://github.com/OpenChannelSSD/qemu-nvme</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+<p>2.进入qemu-nvme目录下，运行配置脚本，make编译</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line"><span class="built_in">cd</span> qemu-nvme</span><br><span class="line">./configure --target-list=x86_64-softmmu --prefix=<span class="variable">$HOME</span>/qemu-nvme</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<p>3.在完成上述步骤后，开始正式配置环境。首先，在物理机上创建一个ocssd格式的文件，例如ocssd.img。</p>
+<blockquote>
+<p>（若提示ocssd参数无效等报错，可能是因为实际使用的是物理机内置的qemu-img，而不是qemu-nvme make编译后生成的qemu-img。将下列命令的qemu-img更改为qemu-nvme/qemu-img代替即可。）</p>
+</blockquote>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">qemu-img create -f ocssd -o num_grp=2,num_pu=4,num_chk=60 ocssd.img</span><br></pre></td></tr></table></figure>
+
+<p>4.创建一个文件，作为模拟的磁盘，用来安装linux系统。</p>
+<blockquote>
+<p>（在物理机上运行qemu虚拟机，虚拟机内加载模拟磁盘的文件与模拟ocssd的文件。最终的实验环境是在qemu虚拟机内部的linux子系统上运行。）</p>
+</blockquote>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">sudo qemu-img create -f raw /home/gasol/qemu-nvme/ubuntu40.raw 40G</span><br></pre></td></tr></table></figure>
+
+<p>5.下载ubuntu镜像，并在第4步建立的模拟磁盘的文件中，安装ubuntu系统。</p>
+<blockquote>
+<p>（此时可能会提示qemu-system-x86_64: warning: host doesn’t support requested feature: CPUID.80000001H:ECX.svm [bit 2]。这是正常的，忽略即可。正常情况下，在输出提示信息后，会弹出新的安装窗口，点击安装即可）</p>
+</blockquote>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">sudo qemu-system-x86_64 -cdrom /home/polarsparc/ubuntu-18.04.1-desktop-amd64.iso -drive format=raw,file=/home/polarsparc/Downloads/VMs/vm-disk-1.raw -enable-kvm -m 2G -name vm-ubuntu-1</span><br></pre></td></tr></table></figure>
+
+<p>6.在物理机系统上，挂载ocssd,并启动虚拟机。</p>
+<blockquote>
+<p>(注意：使用路径qemu-nvme/bin/下的qemu-system-x86_64运行，而不是采用系统内置的qemu-system-x86_64 )</p>
+</blockquote>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">sudo ./bin/qemu-system-x86_64 -m 8G -enable-kvm ubuntu40.raw -blockdev ocssd,node-name=nvme01,file.driver=file,file.filename=ocssd.img -device nvme,drive=nvme01,serial=deadbeef,id=lnvm -cpu host</span><br></pre></td></tr></table></figure>
+
+<p>7.在第6步虚拟机启动的情况下，利用VNC viewer连接，弹出窗口显示虚拟机运行情况。</p>
+<blockquote>
+<p>（若提示无vncviewer，安装对应包即可）（命令中连接的IP和端口与第6步的提示IP和端口相同）</p>
+</blockquote>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">vncviewer 127.0.0.1:5900</span><br></pre></td></tr></table></figure>
+
+<p>8.在虚拟机启动后，可以通过运行以下命令，查看是否成功挂载ocssd设备。</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">sudo nvme lnvm list</span><br></pre></td></tr></table></figure>
+
+<h2 id="二、SPDK安装配置"><a href="#二、SPDK安装配置" class="headerlink" title="二、SPDK安装配置"></a>二、SPDK安装配置</h2><p>0.参考文档：<a href="https://spdk.io/doc/getting_started.html">https://spdk.io/doc/getting_started.html</a></p>
+<p>1.按参考文档Getting started部分运行，即可编译安装SPDK，并可以通过运行<code>build/examples/identify</code>脚本列出系统上有效的NVME设备。</p>
+<blockquote>
+<p>（通过该脚本可以验证SPDK是否成功识别挂载的虚拟OCSSD）</p>
+</blockquote>
+<h2 id="三、关于可能遇到的git-clone与git-submodule速度过慢问题的解决方案"><a href="#三、关于可能遇到的git-clone与git-submodule速度过慢问题的解决方案" class="headerlink" title="三、关于可能遇到的git clone与git submodule速度过慢问题的解决方案"></a>三、关于可能遇到的git clone与git submodule速度过慢问题的解决方案</h2><p>0.参考文档：<a href="https://www.cnblogs.com/zhuchengchao/p/12076153.html">https://www.cnblogs.com/zhuchengchao/p/12076153.html</a></p>
+<p>1.按照文档中的介绍，通过国内的gitee.com网站进行git clone，可以大幅度提升git clone的速率。</p>
+<p>2.对于git submodule速度过慢的问题:</p>
+<blockquote>
+<p>例如在git clone spdk的代码后，若需要git submodule，只需打开spdk/.gitmodules，将其中需要下载的库通过gitee.com下载到本地，并修改.gitmodules内部的路径即可。</p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>学习</category>
+        <category>QEMU</category>
+      </categories>
+      <tags>
+        <tag>OCSSD QEMU</tag>
       </tags>
   </entry>
   <entry>

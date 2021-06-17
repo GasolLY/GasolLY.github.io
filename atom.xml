@@ -6,7 +6,7 @@
   <link href="http://gasolly.github.io/atom.xml" rel="self"/>
   
   <link href="http://gasolly.github.io/"/>
-  <updated>2021-06-17T09:56:21.317Z</updated>
+  <updated>2021-06-17T15:11:31.589Z</updated>
   <id>http://gasolly.github.io/</id>
   
   <author>
@@ -17,11 +17,33 @@
   <generator uri="https://hexo.io/">Hexo</generator>
   
   <entry>
+    <title>Virtual OCSSD 环境搭建</title>
+    <link href="http://gasolly.github.io/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/"/>
+    <id>http://gasolly.github.io/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/</id>
+    <published>2021-06-17T15:54:01.000Z</published>
+    <updated>2021-06-17T15:11:31.589Z</updated>
+    
+    
+    <summary type="html">&lt;h2 id=&quot;一、Virtual-OpenChannel-SSD-环境配置&quot;&gt;&lt;a href=&quot;#一、Virtual-OpenChannel-SSD-环境配置&quot; class=&quot;headerlink&quot; title=&quot;一、Virtual OpenChannel SSD 环境配置&quot;&gt;&lt;/a&gt;一、Virtual OpenChannel SSD 环境配置&lt;/h2&gt;&lt;p&gt;1.下载Qemu-nvme的源码&lt;/p&gt;
+&lt;figure class=&quot;highlight bash&quot;&gt;&lt;table&gt;&lt;tr&gt;&lt;td class=&quot;gutter&quot;&gt;&lt;pre&gt;&lt;span class=&quot;line&quot;&gt;1&lt;/span&gt;&lt;br&gt;&lt;/pre&gt;&lt;/td&gt;&lt;td class=&quot;code&quot;&gt;&lt;pre&gt;&lt;span class=&quot;line&quot;&gt;git &lt;span class=&quot;built_in&quot;&gt;clone&lt;/span&gt; https://github.com/OpenChannelSSD/qemu-nvme&lt;/span&gt;&lt;br&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&lt;/figure&gt;</summary>
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="QEMU" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/QEMU/"/>
+    
+    
+    <category term="OCSSD QEMU" scheme="http://gasolly.github.io/tags/OCSSD-QEMU/"/>
+    
+  </entry>
+  
+  <entry>
     <title>About Me</title>
     <link href="http://gasolly.github.io/2021/06/17/About-Me/"/>
     <id>http://gasolly.github.io/2021/06/17/About-Me/</id>
     <published>2021-06-17T08:39:22.000Z</published>
-    <updated>2021-06-17T09:56:21.317Z</updated>
+    <updated>2021-06-17T09:04:02.758Z</updated>
     
     
       
@@ -49,11 +71,10 @@
     <link href="http://gasolly.github.io/2021/06/17/SPDK%E8%B0%83%E7%A0%94/"/>
     <id>http://gasolly.github.io/2021/06/17/SPDK%E8%B0%83%E7%A0%94/</id>
     <published>2021-06-17T05:44:41.000Z</published>
-    <updated>2021-06-17T08:35:30.526Z</updated>
+    <updated>2021-06-17T15:10:43.042Z</updated>
     
     
-    <summary type="html">&lt;h2 id=&quot;一．SPDK简介&quot;&gt;&lt;a href=&quot;#一．SPDK简介&quot; class=&quot;headerlink&quot; title=&quot;一．SPDK简介&quot;&gt;&lt;/a&gt;一．SPDK简介&lt;/h2&gt;&lt;h3 id=&quot;1-SPDK的起源&quot;&gt;&lt;a href=&quot;#1-SPDK的起源&quot; class=&quot;headerlink&quot; title=&quot;1.SPDK的起源&quot;&gt;&lt;/a&gt;1.SPDK的起源&lt;/h3&gt;&lt;p&gt;固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。&lt;/p&gt;
-&lt;p&gt;用户使用现在的固态设备，比如Intel® SSD DC P3700 Series Non-Volatile Memory Express（NVMe）驱动，面临一个主要的挑战：因为吞吐量和延迟性能比传统的磁盘好太多，现在总的处理时间中，存储软件占用了更大的比例。换句话说，存储软件栈的性能和效率在整个存储系统中越来越重要。随着存储设备继续发展，它将面临远远超过正在使用的软件体系结构的风险（即存储设备受制于相关软件的不足而不能发挥全部性能），在接下来的几年中，存储设备将会继续发展到一个令人难以置信的地步。&lt;/p&gt;</summary>
+    <summary type="html">&lt;h2 id=&quot;一．SPDK简介&quot;&gt;&lt;a href=&quot;#一．SPDK简介&quot; class=&quot;headerlink&quot; title=&quot;一．SPDK简介&quot;&gt;&lt;/a&gt;一．SPDK简介&lt;/h2&gt;&lt;h3 id=&quot;1-SPDK的起源&quot;&gt;&lt;a href=&quot;#1-SPDK的起源&quot; class=&quot;headerlink&quot; title=&quot;1.SPDK的起源&quot;&gt;&lt;/a&gt;1.SPDK的起源&lt;/h3&gt;&lt;p&gt;固态存储设备正在取代数据中心。目前这一代的闪存存储，比起传统的磁盘设备，在性能（performance）、功耗（power consumption）和机架密度（rack density）上具有显著的优势。这些优势将会继续增大，使闪存存储作为下一代存储设备进入市场。&lt;/p&gt;</summary>
     
     
     
@@ -62,7 +83,7 @@
     <category term="SPDK" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/SPDK/"/>
     
     
-    <category term="SPDK" scheme="http://gasolly.github.io/tags/SPDK/"/>
+    <category term="SPDK OCSSD 用户态IO" scheme="http://gasolly.github.io/tags/SPDK-OCSSD-%E7%94%A8%E6%88%B7%E6%80%81IO/"/>
     
   </entry>
   
