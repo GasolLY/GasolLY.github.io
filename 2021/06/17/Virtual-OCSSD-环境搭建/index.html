@@ -101,10 +101,10 @@
        
   <h2 id="一、Virtual-OpenChannel-SSD-环境配置"><a href="#一、Virtual-OpenChannel-SSD-环境配置" class="headerlink" title="一、Virtual OpenChannel SSD 环境配置"></a>一、Virtual OpenChannel SSD 环境配置</h2><p>1.下载Qemu-nvme的源码</p>
 <figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">git <span class="built_in">clone</span> https://github.com/OpenChannelSSD/qemu-nvme</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
+
 <p>2.进入qemu-nvme目录下，运行配置脚本，make编译</p>
 <figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">cd</span> qemu-nvme</span><br><span class="line">./configure --target-list=x86_64-softmmu --prefix=<span class="variable">$HOME</span>/qemu-nvme</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
+<span id="more"></span>
 <p>3.在完成上述步骤后，开始正式配置环境。首先，在物理机上创建一个ocssd格式的文件，例如ocssd.img。</p>
 <blockquote>
 <p>（若提示ocssd参数无效等报错，可能是因为实际使用的是物理机内置的qemu-img，而不是qemu-nvme make编译后生成的qemu-img。将下列命令的qemu-img更改为qemu-nvme/qemu-img代替即可。）</p>
@@ -226,6 +226,15 @@
    
   <nav class="article-nav">
     
+      <a href="/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/" class="article-nav-link">
+        <strong class="article-nav-caption">上一篇</strong>
+        <div class="article-nav-title">
+          
+            LevelDB源码分析——1.基本的数据结构
+          
+        </div>
+      </a>
+    
     
       <a href="/2021/06/17/About-Me/" class="article-nav-link">
         <strong class="article-nav-caption">下一篇</strong>
@@ -293,7 +302,7 @@
     <ul>
       <li>
         Copyrights &copy;
-        2021
+        2021-2022
         <i class="ri-heart-fill heart_icon"></i> Xufei Pan
       </li>
     </ul>
