@@ -6,7 +6,7 @@
   <link href="http://gasolly.github.io/atom.xml" rel="self"/>
   
   <link href="http://gasolly.github.io/"/>
-  <updated>2022-02-07T04:24:34.107Z</updated>
+  <updated>2022-02-07T04:49:34.969Z</updated>
   <id>http://gasolly.github.io/</id>
   
   <author>
@@ -17,20 +17,14 @@
   <generator uri="https://hexo.io/">Hexo</generator>
   
   <entry>
-    <title>LevelDB源码分析——1.基本的数据结构</title>
-    <link href="http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/"/>
-    <id>http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/</id>
-    <published>2022-02-07T04:08:41.000Z</published>
-    <updated>2022-02-07T04:24:34.107Z</updated>
+    <title>LevelDB源码分析——2.基本的数据结构续</title>
+    <link href="http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD/"/>
+    <id>http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD/</id>
+    <published>2022-02-07T04:40:15.000Z</published>
+    <updated>2022-02-07T04:49:34.969Z</updated>
     
     
-      
-      
-        
-        
-    <summary type="html">&lt;h2 id=&quot;一．基本的数据结构&quot;&gt;&lt;a href=&quot;#一．基本的数据结构&quot; class=&quot;headerlink&quot;</summary>
-        
-      
+    <summary type="html">&lt;h2 id=&quot;二-基本的数据结构续&quot;&gt;&lt;a href=&quot;#二-基本的数据结构续&quot; class=&quot;headerlink&quot; title=&quot;二.基本的数据结构续&quot;&gt;&lt;/a&gt;二.基本的数据结构续&lt;/h2&gt;&lt;p&gt;本系列的&lt;a href=&quot;https://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/&quot;&gt;上一篇&lt;/a&gt;介绍了 &lt;code&gt;LevelDB&lt;/code&gt; 中的 &lt;code&gt;Slice&lt;/code&gt;、&lt;code&gt;Hash&lt;/code&gt; 和 &lt;code&gt;LRUCache&lt;/code&gt; 的实现，这一篇将继续分析布隆过滤器、内存池和跳表。&lt;/p&gt;</summary>
     
     
     
@@ -41,7 +35,27 @@
     
     <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
     
-    <category term="KVStore" scheme="http://gasolly.github.io/tags/KVStore/"/>
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——1.基本的数据结构</title>
+    <link href="http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/"/>
+    <id>http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/</id>
+    <published>2022-02-07T04:08:41.000Z</published>
+    <updated>2022-02-07T04:36:25.591Z</updated>
+    
+    
+    <summary type="html">&lt;h2 id=&quot;一．基本的数据结构&quot;&gt;&lt;a href=&quot;#一．基本的数据结构&quot; class=&quot;headerlink&quot; title=&quot;一．基本的数据结构&quot;&gt;&lt;/a&gt;一．基本的数据结构&lt;/h2&gt;&lt;p&gt;为了督促自己认真的阅读LevelDB源码，同时记录下相关的收获，避免阅后即忘，因此在Blog中记录下LevelDB源码分析的相关内容。&lt;/p&gt;
+&lt;p&gt;本文会介绍 LevelDB 中的基本数据结构，包括 &lt;code&gt;Slice&lt;/code&gt;、&lt;code&gt;Hash&lt;/code&gt;、&lt;code&gt;LRUCache&lt;/code&gt;。&lt;/p&gt;</summary>
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
     
   </entry>
   
