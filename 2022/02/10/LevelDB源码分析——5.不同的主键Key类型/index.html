@@ -102,6 +102,8 @@
   <h2 id="五-不同的主键Key类型"><a href="#五-不同的主键Key类型" class="headerlink" title="五.不同的主键Key类型"></a>五.不同的主键Key类型</h2><p>本系列的前两篇介绍了LevelDB高性能写操作的核心：日志与内存数据库。</p>
 <p>在阅读LevelDB的源码时，往往能看到这样的参数传递：<code>Slice key</code> ,<code>const char* key</code>,<code>Key key</code>等等</p>
 <p>他们都有相同的参数名，但有时代表的key却不一定相同。</p>
+<span id="more"></span>
+
 <p>在skiplist.h中, 能看到</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">void Insert(const Key&amp; key); </span><br></pre></td></tr></table></figure>
 
