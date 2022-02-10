@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+
+
+<html lang="en">
+  
+
+    <head>
+      <meta charset="utf-8" />
+        
+      <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1"
+      />
+      <title>LevelDB源码分析——3.日志 |  Gasol</title>
+  <meta name="generator" content="hexo-theme-ayer">
+      
+      <link rel="shortcut icon" href="/favicon.ico" />
+       
+<link rel="stylesheet" href="/dist/main.css">
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/Shen-Yu/cdn/css/remixicon.min.css"
+      />
+      
+<link rel="stylesheet" href="/css/custom.css">
+ 
+      <script src="https://cdn.jsdelivr.net/npm/pace-js@1.0.2/pace.min.js"></script>
+       
+ 
+
+      <!-- mermaid -->
+      
+    <link rel="alternate" href="/atom.xml" title="Gasol" type="application/atom+xml">
+</head>
+  </html>
+</html>
+
+
+<body>
+  <div id="app">
+    
+      
+    <main class="content on">
+      <section class="outer">
+  <article
+  id="post-LevelDB源码分析——3.日志"
+  class="article article-type-post"
+  itemscope
+  itemprop="blogPost"
+  data-scroll-reveal
+>
+  <div class="article-inner">
+    
+    <header class="article-header">
+       
+<h1 class="article-title sea-center" style="border-left:0" itemprop="name">
+  LevelDB源码分析——3.日志
+</h1>
+ 
+
+      
+    </header>
+     
+    <div class="article-meta">
+      <a href="/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%943.%E6%97%A5%E5%BF%97/" class="article-date">
+  <time datetime="2022-02-09T10:40:25.000Z" itemprop="datePublished">2022-02-09</time>
+</a> 
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/LevelDB/">LevelDB</a>
+  </div>
+  
+<div class="word_count">
+    <span class="post-time">
+        <span class="post-meta-item-icon">
+            <i class="ri-quill-pen-line"></i>
+            <span class="post-meta-item-text"> Word count:</span>
+            <span class="post-count">3.4k</span>
+        </span>
+    </span>
+
+    <span class="post-time">
+        &nbsp; | &nbsp;
+        <span class="post-meta-item-icon">
+            <i class="ri-book-open-line"></i>
+            <span class="post-meta-item-text"> Reading time≈</span>
+            <span class="post-count">17 min</span>
+        </span>
+    </span>
+</div>
+ 
+    </div>
+      
+    <div class="tocbot"></div>
+
+
+
+
+  
+    <div class="article-entry" itemprop="articleBody">
+       
+  <h2 id="三-日志"><a href="#三-日志" class="headerlink" title="三.日志"></a>三.日志</h2><p>本系列的<a href="https://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD/">前两篇</a>介绍了 LevelDB 中使用的数据结构，并没有牵涉到 LevelDB 的核心实现。接下来的几篇将着重介绍 LevelDB 核心组件，包括日志、内存数据库、SortedTable、Compaction 和版本管理。本篇着重阐述高性能写操作的核心：日志和内存数据库。</p>
+<p>怎样最快地把键值对存起来？不考虑查找的速度的话，追加地写入文件是最快的，查找时反向查找。举个例子🌰：</p>
+<span id="more"></span>
+
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">dict</span>[<span class="number">1</span>] = <span class="string">&quot;LY&quot;</span></span><br><span class="line"><span class="built_in">dict</span>[<span class="number">2</span>] = <span class="string">&quot;SF&quot;</span></span><br><span class="line"><span class="built_in">dict</span>[<span class="number">3</span>] = <span class="string">&quot;MX&quot;</span></span><br><span class="line"><span class="keyword">del</span> <span class="built_in">dict</span>[<span class="number">1</span>]</span><br><span class="line"><span class="built_in">dict</span>[<span class="number">2</span>] = <span class="string">&quot;ST&quot;</span></span><br></pre></td></tr></table></figure>
+
+<p>上面代码中的 5 个操作，顺序地写入文件，每次添加一行，可以得到类似如下的记录：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">Add 1: &quot;LY&quot;</span><br><span class="line">Add 2: &quot;SF&quot;</span><br><span class="line">Add 3: &quot;MX&quot;</span><br><span class="line">Del 1</span><br><span class="line">Add 2: &quot;ST&quot;</span><br></pre></td></tr></table></figure>
+
+<p>查找时反向查找，例如查找 <code>key=2</code>，返回最后一行最新的结果 “ST”；查找 <code>key=1</code>，返回倒数第二行的删除操作。LevelDB 中写操作使用了相似的技术，其写入分为两步：</p>
+<ol>
+<li>将数据追加到日志中；</li>
+<li>将数据插入内存数据库。</li>
+</ol>
+<p>追加到日志一来保证了写入速度，二来保证了数据不会丢失，只要日志写入了磁盘，即使机器断电了，重启后也可以根据日志恢复出数据来；插入内存数据库同样维持着高性能，当内存数据库的小大到达一定规模时，会将当前的内存数据库持久化并建立新的内存数据库。</p>
+<h3 id="1-批量写操作-WriteBatch"><a href="#1-批量写操作-WriteBatch" class="headerlink" title="1. 批量写操作 WriteBatch"></a>1. 批量写操作 WriteBatch</h3><p>LevelDB 的键值对写入接口为 <code>DB::Put(options, key, value)</code>，删除某个键值对的接口为 <code>DB::Delete(options, key)</code>，其对应的实现为：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// source: db/db_impl.cc</span></span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">DB::Put</span><span class="params">(<span class="keyword">const</span> WriteOptions&amp; opt, <span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> </span>&#123;</span><br><span class="line">  WriteBatch batch;</span><br><span class="line">  batch.<span class="built_in">Put</span>(key, value);</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">Write</span>(opt, &amp;batch);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">DB::Delete</span><span class="params">(<span class="keyword">const</span> WriteOptions&amp; opt, <span class="keyword">const</span> Slice&amp; key)</span> </span>&#123;</span><br><span class="line">  WriteBatch batch;</span><br><span class="line">  batch.<span class="built_in">Delete</span>(key);</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">Write</span>(opt, &amp;batch);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>插入和删除操作首先被打包成一个 <code>WriteBatch</code>。其定义于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/include/leveldb/write_batch.h"><code>include/leveldb/write_batch.h</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// WriteBatch holds a collection of updates to apply atomically to a DB.</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// The updates are applied in the order in which they are added</span></span><br><span class="line"><span class="comment">// to the WriteBatch.  For example, the value of &quot;key&quot; will be &quot;v3&quot;</span></span><br><span class="line"><span class="comment">// after the following batch is written:</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">//    batch.Put(&quot;key&quot;, &quot;v1&quot;);</span></span><br><span class="line"><span class="comment">//    batch.Delete(&quot;key&quot;);</span></span><br><span class="line"><span class="comment">//    batch.Put(&quot;key&quot;, &quot;v2&quot;);</span></span><br><span class="line"><span class="comment">//    batch.Put(&quot;key&quot;, &quot;v3&quot;);</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// Multiple threads can invoke const methods on a WriteBatch without</span></span><br><span class="line"><span class="comment">// external synchronization, but if any of the threads may call a</span></span><br><span class="line"><span class="comment">// non-const method, all threads accessing the same WriteBatch must use</span></span><br><span class="line"><span class="comment">// external synchronization.</span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;string&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/export.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/status.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Slice</span>;</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">LEVELDB_EXPORT</span> <span class="title">WriteBatch</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="class"><span class="keyword">class</span> <span class="title">LEVELDB_EXPORT</span> <span class="title">Handler</span> &#123;</span></span><br><span class="line">   <span class="keyword">public</span>:</span><br><span class="line">    <span class="keyword">virtual</span> ~<span class="built_in">Handler</span>();</span><br><span class="line">    <span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">Put</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> </span>= <span class="number">0</span>;</span><br><span class="line">    <span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">Delete</span><span class="params">(<span class="keyword">const</span> Slice&amp; key)</span> </span>= <span class="number">0</span>;</span><br><span class="line">  &#125;;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">WriteBatch</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Intentionally copyable.</span></span><br><span class="line">  <span class="built_in">WriteBatch</span>(<span class="keyword">const</span> WriteBatch&amp;) = <span class="keyword">default</span>;</span><br><span class="line">  WriteBatch&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> WriteBatch&amp;) = <span class="keyword">default</span>;</span><br><span class="line"></span><br><span class="line">  ~<span class="built_in">WriteBatch</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Store the mapping &quot;key-&gt;value&quot; in the database.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Put</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// If the database contains a mapping for &quot;key&quot;, erase it.  Else do nothing.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Delete</span><span class="params">(<span class="keyword">const</span> Slice&amp; key)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Clear all updates buffered in this batch.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Clear</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// The size of the database changes caused by this batch.</span></span><br><span class="line">  <span class="comment">//</span></span><br><span class="line">  <span class="comment">// This number is tied to implementation details, and may change across</span></span><br><span class="line">  <span class="comment">// releases. It is intended for LevelDB usage metrics.</span></span><br><span class="line">  <span class="function"><span class="keyword">size_t</span> <span class="title">ApproximateSize</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Copies the operations in &quot;source&quot; to this batch.</span></span><br><span class="line">  <span class="comment">//</span></span><br><span class="line">  <span class="comment">// This runs in O(source size) time. However, the constant factor is better</span></span><br><span class="line">  <span class="comment">// than calling Iterate() over the source batch with a Handler that replicates</span></span><br><span class="line">  <span class="comment">// the operations into this batch.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Append</span><span class="params">(<span class="keyword">const</span> WriteBatch&amp; source)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Support for iterating over the contents of a batch.</span></span><br><span class="line">  <span class="function">Status <span class="title">Iterate</span><span class="params">(Handler* handler)</span> <span class="keyword">const</span></span>;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="keyword">friend</span> <span class="class"><span class="keyword">class</span> <span class="title">WriteBatchInternal</span>;</span></span><br><span class="line"></span><br><span class="line">  std::string rep_;  <span class="comment">// See comment in write_batch.cc for the format of rep_</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p><code>WriteBatch</code> 接口中除了提到的 <code>Put</code> 和 <code>Delete</code>，还提供了一个 <code>Append</code> 方法可以将其他 <code>WriteBatch</code> 合并过来。另外提供了一个 <code>Iterate</code> 迭代函数和对应的 <code>Handler</code> 类接口，后面会使用到。值得注意的还有 <code>friend class WriteBatchInternal;</code>，这种预先定义一个友元类、后期则可以在该友元类中直接访问私有变量和方法，适合一些不方便暴露出来的内部操作。接着看 <code>WriteBatchInternal</code> 的定义 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/write_batch_internal.h"><code>db/write_batch_internal.h</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/dbformat.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/write_batch.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">MemTable</span>;</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// WriteBatchInternal provides static methods for manipulating a</span></span><br><span class="line"><span class="comment">// WriteBatch that we don&#x27;t want in the public WriteBatch interface.</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">WriteBatchInternal</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// Return the number of entries in the batch.</span></span><br><span class="line">  <span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">Count</span><span class="params">(<span class="keyword">const</span> WriteBatch* batch)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Set the count for the number of entries in the batch.</span></span><br><span class="line">  <span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">SetCount</span><span class="params">(WriteBatch* batch, <span class="keyword">int</span> n)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return the sequence number for the start of this batch.</span></span><br><span class="line">  <span class="function"><span class="keyword">static</span> SequenceNumber <span class="title">Sequence</span><span class="params">(<span class="keyword">const</span> WriteBatch* batch)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Store the specified number as the sequence number for the start of</span></span><br><span class="line">  <span class="comment">// this batch.</span></span><br><span class="line">  <span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">SetSequence</span><span class="params">(WriteBatch* batch, SequenceNumber seq)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">static</span> Slice <span class="title">Contents</span><span class="params">(<span class="keyword">const</span> WriteBatch* batch)</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">Slice</span>(batch-&gt;rep_); &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">static</span> <span class="keyword">size_t</span> <span class="title">ByteSize</span><span class="params">(<span class="keyword">const</span> WriteBatch* batch)</span> </span>&#123; <span class="keyword">return</span> batch-&gt;rep_.<span class="built_in">size</span>(); &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">SetContents</span><span class="params">(WriteBatch* batch, <span class="keyword">const</span> Slice&amp; contents)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">static</span> Status <span class="title">InsertInto</span><span class="params">(<span class="keyword">const</span> WriteBatch* batch, MemTable* memtable)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">Append</span><span class="params">(WriteBatch* dst, <span class="keyword">const</span> WriteBatch* src)</span></span>;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p>类中全部是静态函数，并且附带至少一个 <code>WriteBatch* batch</code> 参数。因为友元类的原因这些函数里均可以访问 <code>WriteBatch</code> 里唯一的私有成员 <code>rep_</code>。<code>WriteBatch</code> 和 <code>WriteBatchInternal</code> 函数实现均位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/write_batch.cc"><code>db/write_batch.cc</code></a>，为了方便阅读我会把内部的函数重新排序：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// WriteBatch header has an 8-byte sequence number followed by a 4-byte count.</span></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">size_t</span> kHeader = <span class="number">12</span>;</span><br><span class="line"></span><br><span class="line">WriteBatch::<span class="built_in">WriteBatch</span>() &#123; <span class="built_in">Clear</span>(); &#125;</span><br><span class="line"></span><br><span class="line">WriteBatch::~<span class="built_in">WriteBatch</span>() = <span class="keyword">default</span>;</span><br><span class="line"></span><br><span class="line">WriteBatch::Handler::~<span class="built_in">Handler</span>() = <span class="keyword">default</span>;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatch::Clear</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  rep_.<span class="built_in">clear</span>();</span><br><span class="line">  rep_.<span class="built_in">resize</span>(kHeader);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">size_t</span> <span class="title">WriteBatch::ApproximateSize</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> rep_.<span class="built_in">size</span>(); &#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">WriteBatchInternal::Count</span><span class="params">(<span class="keyword">const</span> WriteBatch* b)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">DecodeFixed32</span>(b-&gt;rep_.<span class="built_in">data</span>() + <span class="number">8</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatchInternal::SetCount</span><span class="params">(WriteBatch* b, <span class="keyword">int</span> n)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">EncodeFixed32</span>(&amp;b-&gt;rep_[<span class="number">8</span>], n);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">SequenceNumber <span class="title">WriteBatchInternal::Sequence</span><span class="params">(<span class="keyword">const</span> WriteBatch* b)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">SequenceNumber</span>(<span class="built_in">DecodeFixed64</span>(b-&gt;rep_.<span class="built_in">data</span>()));</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatchInternal::SetSequence</span><span class="params">(WriteBatch* b, SequenceNumber seq)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">EncodeFixed64</span>(&amp;b-&gt;rep_[<span class="number">0</span>], seq);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>WriteBatch::rep_</code> 的前 12 个字节定义为 Header，存储了 sequence number 和 count。<code>EncodeFixed</code> 和 <code>DecodeFixed</code>系列函数实现了数值到字符串的编解码，有兴趣可以前往 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/util/coding.cc"><code>util/coding.cc</code></a> 查看实现，这里不详细介绍了。接下来看 <code>Put</code> 和 <code>Delete</code> 的实现：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatch::Put</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> </span>&#123;</span><br><span class="line">  WriteBatchInternal::<span class="built_in">SetCount</span>(<span class="keyword">this</span>, WriteBatchInternal::<span class="built_in">Count</span>(<span class="keyword">this</span>) + <span class="number">1</span>);</span><br><span class="line">  rep_.<span class="built_in">push_back</span>(<span class="keyword">static_cast</span>&lt;<span class="keyword">char</span>&gt;(kTypeValue));</span><br><span class="line">  <span class="built_in">PutLengthPrefixedSlice</span>(&amp;rep_, key);</span><br><span class="line">  <span class="built_in">PutLengthPrefixedSlice</span>(&amp;rep_, value);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatch::Delete</span><span class="params">(<span class="keyword">const</span> Slice&amp; key)</span> </span>&#123;</span><br><span class="line">  WriteBatchInternal::<span class="built_in">SetCount</span>(<span class="keyword">this</span>, WriteBatchInternal::<span class="built_in">Count</span>(<span class="keyword">this</span>) + <span class="number">1</span>);</span><br><span class="line">  rep_.<span class="built_in">push_back</span>(<span class="keyword">static_cast</span>&lt;<span class="keyword">char</span>&gt;(kTypeDeletion));</span><br><span class="line">  <span class="built_in">PutLengthPrefixedSlice</span>(&amp;rep_, key);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatch::Append</span><span class="params">(<span class="keyword">const</span> WriteBatch&amp; source)</span> </span>&#123;</span><br><span class="line">  WriteBatchInternal::<span class="built_in">Append</span>(<span class="keyword">this</span>, &amp;source);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatchInternal::SetContents</span><span class="params">(WriteBatch* b, <span class="keyword">const</span> Slice&amp; contents)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">assert</span>(contents.<span class="built_in">size</span>() &gt;= kHeader);</span><br><span class="line">  b-&gt;rep_.<span class="built_in">assign</span>(contents.<span class="built_in">data</span>(), contents.<span class="built_in">size</span>());</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">WriteBatchInternal::Append</span><span class="params">(WriteBatch* dst, <span class="keyword">const</span> WriteBatch* src)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">SetCount</span>(dst, <span class="built_in">Count</span>(dst) + <span class="built_in">Count</span>(src));</span><br><span class="line">  <span class="built_in">assert</span>(src-&gt;rep_.<span class="built_in">size</span>() &gt;= kHeader);</span><br><span class="line">  dst-&gt;rep_.<span class="built_in">append</span>(src-&gt;rep_.<span class="built_in">data</span>() + kHeader, src-&gt;rep_.<span class="built_in">size</span>() - kHeader);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>Put</code> 和 <code>Delete</code> 首先将计数加一，在 <code>rep_</code> 中写入操作类型，再写入键值对。<code>PutLengthPrefixedSlice</code> 函数会先写入字符串的长度，再写入字符串的内容。<code>WriteBatchInternal</code> 的赋值和追加均是对 <code>rep_</code> 的进行操作。继续看迭代函数和 <code>Handle</code> 的部分：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">WriteBatch::Iterate</span><span class="params">(Handler* handler)</span> <span class="keyword">const</span> </span>&#123;</span><br><span class="line">  <span class="function">Slice <span class="title">input</span><span class="params">(rep_)</span></span>;</span><br><span class="line">  <span class="keyword">if</span> (input.<span class="built_in">size</span>() &lt; kHeader) &#123;</span><br><span class="line">    <span class="keyword">return</span> Status::<span class="built_in">Corruption</span>(<span class="string">&quot;malformed WriteBatch (too small)&quot;</span>);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  input.<span class="built_in">remove_prefix</span>(kHeader);</span><br><span class="line">  Slice key, value;</span><br><span class="line">  <span class="keyword">int</span> found = <span class="number">0</span>;</span><br><span class="line">  <span class="keyword">while</span> (!input.<span class="built_in">empty</span>()) &#123;</span><br><span class="line">    found++;</span><br><span class="line">    <span class="keyword">char</span> tag = input[<span class="number">0</span>];</span><br><span class="line">    input.<span class="built_in">remove_prefix</span>(<span class="number">1</span>);</span><br><span class="line">    <span class="built_in"><span class="keyword">switch</span></span> (tag) &#123;</span><br><span class="line">      <span class="keyword">case</span> kTypeValue:</span><br><span class="line">        <span class="keyword">if</span> (<span class="built_in">GetLengthPrefixedSlice</span>(&amp;input, &amp;key) &amp;&amp;</span><br><span class="line">            <span class="built_in">GetLengthPrefixedSlice</span>(&amp;input, &amp;value)) &#123;</span><br><span class="line">          handler-&gt;<span class="built_in">Put</span>(key, value);</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">          <span class="keyword">return</span> Status::<span class="built_in">Corruption</span>(<span class="string">&quot;bad WriteBatch Put&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">      <span class="keyword">case</span> kTypeDeletion:</span><br><span class="line">        <span class="keyword">if</span> (<span class="built_in">GetLengthPrefixedSlice</span>(&amp;input, &amp;key)) &#123;</span><br><span class="line">          handler-&gt;<span class="built_in">Delete</span>(key);</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">          <span class="keyword">return</span> Status::<span class="built_in">Corruption</span>(<span class="string">&quot;bad WriteBatch Delete&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">      <span class="keyword">default</span>:</span><br><span class="line">        <span class="keyword">return</span> Status::<span class="built_in">Corruption</span>(<span class="string">&quot;unknown WriteBatch tag&quot;</span>);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (found != WriteBatchInternal::<span class="built_in">Count</span>(<span class="keyword">this</span>)) &#123;</span><br><span class="line">    <span class="keyword">return</span> Status::<span class="built_in">Corruption</span>(<span class="string">&quot;WriteBatch has wrong count&quot;</span>);</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> Status::<span class="built_in">OK</span>();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> &#123;</span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">MemTableInserter</span> :</span> <span class="keyword">public</span> WriteBatch::Handler &#123;</span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  SequenceNumber sequence_;</span><br><span class="line">  MemTable* mem_;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Put</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> <span class="keyword">override</span> </span>&#123;</span><br><span class="line">    mem_-&gt;<span class="built_in">Add</span>(sequence_, kTypeValue, key, value);</span><br><span class="line">    sequence_++;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Delete</span><span class="params">(<span class="keyword">const</span> Slice&amp; key)</span> <span class="keyword">override</span> </span>&#123;</span><br><span class="line">    mem_-&gt;<span class="built_in">Add</span>(sequence_, kTypeDeletion, key, <span class="built_in">Slice</span>());</span><br><span class="line">    sequence_++;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;;</span><br><span class="line">&#125;  <span class="comment">// namespace</span></span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">WriteBatchInternal::InsertInto</span><span class="params">(<span class="keyword">const</span> WriteBatch* b, MemTable* memtable)</span> </span>&#123;</span><br><span class="line">  MemTableInserter inserter;</span><br><span class="line">  inserter.sequence_ = WriteBatchInternal::<span class="built_in">Sequence</span>(b);</span><br><span class="line">  inserter.mem_ = memtable;</span><br><span class="line">  <span class="keyword">return</span> b-&gt;<span class="built_in">Iterate</span>(&amp;inserter);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>迭代函数 <code>WriteBatch::Iterate</code> 会按照顺序将 <code>rep_</code> 中存储的键值对操作放到 <code>hander</code> 上执行。下面的匿名空间里定义了一个继承 <code>Handler</code> 的子类 <code>MemTableInserter</code>，将 <code>Put</code> 和 <code>Delete</code> 转到 <code>MemTable</code> 上执行。<code>MemTable</code> 即为内存数据库，本文稍后介绍。<code>WriteBatchInternal::InsertInto</code> 就直接根据 <code>MemTable</code> 构造 <code>MemTableInserter</code>。这样做的好处，可能就是 <code>WriteBatch::Iterate</code> 与 <code>MemTable</code> 解耦，<code>Handler</code> 可以自行替换。</p>
+<p>综合来看，<code>WriteBatch</code> 将所有的修改和删除操作均存储到一个字符串中，并且提供了内存数据库的迭代接口。而单个字符串也可以非常方便地进行持久化，这一点也会在日志部分有所体现。</p>
+<h3 id="2-日志-Log"><a href="#2-日志-Log" class="headerlink" title="2. 日志 Log"></a>2. 日志 Log</h3><p>在 <code>DB::Write</code> 函数中，核心的写入步骤代码如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// Add to log and apply to memtable.  We can release the lock</span></span><br><span class="line"><span class="comment">// during this phase since &amp;w is currently responsible for logging</span></span><br><span class="line"><span class="comment">// and protects against concurrent loggers and concurrent writes</span></span><br><span class="line"><span class="comment">// into mem_.</span></span><br><span class="line">&#123;</span><br><span class="line">  mutex_.<span class="built_in">Unlock</span>();</span><br><span class="line">  status = log_-&gt;<span class="built_in">AddRecord</span>(WriteBatchInternal::<span class="built_in">Contents</span>(updates));</span><br><span class="line">  <span class="keyword">bool</span> sync_error = <span class="literal">false</span>;</span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>() &amp;&amp; options.sync) &#123;</span><br><span class="line">    status = logfile_-&gt;<span class="built_in">Sync</span>();</span><br><span class="line">    <span class="keyword">if</span> (!status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      sync_error = <span class="literal">true</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    status = WriteBatchInternal::<span class="built_in">InsertInto</span>(updates, mem_);</span><br><span class="line">  &#125;</span><br><span class="line">  mutex_.<span class="built_in">Lock</span>();</span><br><span class="line">  <span class="keyword">if</span> (sync_error) &#123;</span><br><span class="line">    <span class="comment">// The state of the log file is indeterminate: the log record we</span></span><br><span class="line">    <span class="comment">// just added may or may not show up when the DB is re-opened.</span></span><br><span class="line">    <span class="comment">// So we force the DB into a mode where all future writes fail.</span></span><br><span class="line">    <span class="built_in">RecordBackgroundError</span>(status);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>先追加到日志，再写入内存数据库。这里的 <code>log_</code> 为成员变量，类型为 <code>log::Writer</code>，其定义位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/log_writer.h"><code>db/log_writer.h</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;stdint.h&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/log_format.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/slice.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/status.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">WritableFile</span>;</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> log &#123;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Writer</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// Create a writer that will append data to &quot;*dest&quot;.</span></span><br><span class="line">  <span class="comment">// &quot;*dest&quot; must be initially empty.</span></span><br><span class="line">  <span class="comment">// &quot;*dest&quot; must remain live while this Writer is in use.</span></span><br><span class="line">  <span class="function"><span class="keyword">explicit</span> <span class="title">Writer</span><span class="params">(WritableFile* dest)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Create a writer that will append data to &quot;*dest&quot;.</span></span><br><span class="line">  <span class="comment">// &quot;*dest&quot; must have initial length &quot;dest_length&quot;.</span></span><br><span class="line">  <span class="comment">// &quot;*dest&quot; must remain live while this Writer is in use.</span></span><br><span class="line">  <span class="built_in">Writer</span>(WritableFile* dest, <span class="keyword">uint64_t</span> dest_length);</span><br><span class="line"></span><br><span class="line">  <span class="built_in">Writer</span>(<span class="keyword">const</span> Writer&amp;) = <span class="keyword">delete</span>;</span><br><span class="line">  Writer&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> Writer&amp;) = <span class="keyword">delete</span>;</span><br><span class="line"></span><br><span class="line">  ~<span class="built_in">Writer</span>();</span><br><span class="line"></span><br><span class="line">  <span class="function">Status <span class="title">AddRecord</span><span class="params">(<span class="keyword">const</span> Slice&amp; slice)</span></span>;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="function">Status <span class="title">EmitPhysicalRecord</span><span class="params">(RecordType type, <span class="keyword">const</span> <span class="keyword">char</span>* ptr, <span class="keyword">size_t</span> length)</span></span>;</span><br><span class="line"></span><br><span class="line">  WritableFile* dest_;</span><br><span class="line">  <span class="keyword">int</span> block_offset_;  <span class="comment">// Current offset in block</span></span><br><span class="line"></span><br><span class="line">  <span class="comment">// crc32c values for all supported record types.  These are</span></span><br><span class="line">  <span class="comment">// pre-computed to reduce the overhead of computing the crc of the</span></span><br><span class="line">  <span class="comment">// record type stored in the header.</span></span><br><span class="line">  <span class="keyword">uint32_t</span> type_crc_[kMaxRecordType + <span class="number">1</span>];</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace log</span></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p>公开的接口只有一个 <code>Log::Writer::AddRecord</code>，也就是 <code>DB::Write</code> 中调用的函数。另外类中还有一个私有数组 <code>type_crc_</code>，内部存储了预先计算的几种类型的 <code>CRC32</code> 校验值。常量 <code>kMaxRecordType</code> 定义于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/format.h"><code>db/log_format.h</code></a>，该文件定义了日志格式相关的几个常量：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">enum</span> <span class="title">RecordType</span> &#123;</span></span><br><span class="line">  <span class="comment">// Zero is reserved for preallocated files</span></span><br><span class="line">  kZeroType = <span class="number">0</span>,</span><br><span class="line"></span><br><span class="line">  kFullType = <span class="number">1</span>,</span><br><span class="line"></span><br><span class="line">  <span class="comment">// For fragments</span></span><br><span class="line">  kFirstType = <span class="number">2</span>,</span><br><span class="line">  kMiddleType = <span class="number">3</span>,</span><br><span class="line">  kLastType = <span class="number">4</span></span><br><span class="line">&#125;;</span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">int</span> kMaxRecordType = kLastType;</span><br><span class="line"></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">int</span> kBlockSize = <span class="number">32768</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Header is checksum (4 bytes), length (2 bytes), type (1 byte).</span></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">int</span> kHeaderSize = <span class="number">4</span> + <span class="number">2</span> + <span class="number">1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>日志类中的 <code>AddRecord</code> 函数每次调用会增加一条记录 Record，同时我们需要保证以后可以按顺序读取出每一条 Record。为了提升日志的读取速度速度，LevelDB 引入了 Block 的概念。在读写文件时会按照一个一个 Block 来读写，默认的 Block 大小为 <code>kBlockSize = 32KB</code>。而一条记录可能比 Block 还要长，所以还需要对过长的 Record 做合适的切分，切成片段 Fragment 后再放入 Block 中。Fragment 分为三种类型，分别是 <code>kFirstType</code>、<code>kMiddleType</code> 和 <code>kLastType</code>，参看下图：</p>
+<p><a target="_blank" rel="noopener" href="https://sf-zhou.github.io/images/0401845d2d596d0a577fe164ba72f66a.svg"><img src="https://sf-zhou.github.io/images/0401845d2d596d0a577fe164ba72f66a.svg" alt="img"></a>Log Format</p>
+<p>继续看 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/log_writer.cc"><code>db/log_writer.cc</code></a> 的具体实现：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/log_writer.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;stdint.h&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/env.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;util/coding.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;util/crc32c.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"><span class="keyword">namespace</span> log &#123;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">InitTypeCrc</span><span class="params">(<span class="keyword">uint32_t</span>* type_crc)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt;= kMaxRecordType; i++) &#123;</span><br><span class="line">    <span class="keyword">char</span> t = <span class="keyword">static_cast</span>&lt;<span class="keyword">char</span>&gt;(i);</span><br><span class="line">    type_crc[i] = crc32c::<span class="built_in">Value</span>(&amp;t, <span class="number">1</span>);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">Writer::<span class="built_in">Writer</span>(WritableFile* dest) : <span class="built_in">dest_</span>(dest), <span class="built_in">block_offset_</span>(<span class="number">0</span>) &#123;</span><br><span class="line">  <span class="built_in">InitTypeCrc</span>(type_crc_);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">Writer::<span class="built_in">Writer</span>(WritableFile* dest, <span class="keyword">uint64_t</span> dest_length)</span><br><span class="line">    : <span class="built_in">dest_</span>(dest), <span class="built_in">block_offset_</span>(dest_length % kBlockSize) &#123;</span><br><span class="line">  <span class="built_in">InitTypeCrc</span>(type_crc_);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">Writer::~<span class="built_in">Writer</span>() = <span class="keyword">default</span>;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">Writer::EmitPhysicalRecord</span><span class="params">(RecordType t, <span class="keyword">const</span> <span class="keyword">char</span>* ptr,</span></span></span><br><span class="line"><span class="params"><span class="function">                                  <span class="keyword">size_t</span> length)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">assert</span>(length &lt;= <span class="number">0xffff</span>);  <span class="comment">// Must fit in two bytes</span></span><br><span class="line">  <span class="built_in">assert</span>(block_offset_ + kHeaderSize + length &lt;= kBlockSize);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Format the header</span></span><br><span class="line">  <span class="keyword">char</span> buf[kHeaderSize];</span><br><span class="line">  buf[<span class="number">4</span>] = <span class="keyword">static_cast</span>&lt;<span class="keyword">char</span>&gt;(length &amp; <span class="number">0xff</span>);</span><br><span class="line">  buf[<span class="number">5</span>] = <span class="keyword">static_cast</span>&lt;<span class="keyword">char</span>&gt;(length &gt;&gt; <span class="number">8</span>);</span><br><span class="line">  buf[<span class="number">6</span>] = <span class="keyword">static_cast</span>&lt;<span class="keyword">char</span>&gt;(t);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Compute the crc of the record type and the payload.</span></span><br><span class="line">  <span class="keyword">uint32_t</span> crc = crc32c::<span class="built_in">Extend</span>(type_crc_[t], ptr, length);</span><br><span class="line">  crc = crc32c::<span class="built_in">Mask</span>(crc);  <span class="comment">// Adjust for storage</span></span><br><span class="line">  <span class="built_in">EncodeFixed32</span>(buf, crc);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Write the header and the payload</span></span><br><span class="line">  Status s = dest_-&gt;<span class="built_in">Append</span>(<span class="built_in">Slice</span>(buf, kHeaderSize));</span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    s = dest_-&gt;<span class="built_in">Append</span>(<span class="built_in">Slice</span>(ptr, length));</span><br><span class="line">    <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      s = dest_-&gt;<span class="built_in">Flush</span>();</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  block_offset_ += kHeaderSize + length;</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace log</span></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p>构造时 <code>InitTypeCrc</code> 函数初始化了 <code>type_crc_</code> 数组，另外如果构造时有 <code>dest_length</code> 参数，则将 <code>block_offset_</code> 设为 <code>dest_length % kBlockSize</code>。至于函数 <code>EmitPhysicalRecord</code>，从函数名来看其作用是触发物理记录。该函数先构造了一个 Record Header <code>buf</code>，前 4 字节存储 CRC32 校验值，后面依次存储长度和 Record 类型。最终会将 Header、字节流写入文件并刷新，并且更新 <code>block_offset_</code>。最后来看下 <code>Log::Writer::AddRecord</code> 函数的实现：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">Writer::AddRecord</span><span class="params">(<span class="keyword">const</span> Slice&amp; slice)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">char</span>* ptr = slice.<span class="built_in">data</span>();</span><br><span class="line">  <span class="keyword">size_t</span> left = slice.<span class="built_in">size</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Fragment the record if necessary and emit it.  Note that if slice</span></span><br><span class="line">  <span class="comment">// is empty, we still want to iterate once to emit a single</span></span><br><span class="line">  <span class="comment">// zero-length record</span></span><br><span class="line">  Status s;</span><br><span class="line">  <span class="keyword">bool</span> begin = <span class="literal">true</span>;</span><br><span class="line">  <span class="keyword">do</span> &#123;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">int</span> leftover = kBlockSize - block_offset_;</span><br><span class="line">    <span class="built_in">assert</span>(leftover &gt;= <span class="number">0</span>);</span><br><span class="line">    <span class="keyword">if</span> (leftover &lt; kHeaderSize) &#123;</span><br><span class="line">      <span class="comment">// Switch to a new block</span></span><br><span class="line">      <span class="keyword">if</span> (leftover &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        <span class="comment">// Fill the trailer (literal below relies on kHeaderSize being 7)</span></span><br><span class="line">        <span class="built_in"><span class="keyword">static_assert</span></span>(kHeaderSize == <span class="number">7</span>, <span class="string">&quot;&quot;</span>);</span><br><span class="line">        dest_-&gt;<span class="built_in">Append</span>(<span class="built_in">Slice</span>(<span class="string">&quot;\x00\x00\x00\x00\x00\x00&quot;</span>, leftover));</span><br><span class="line">      &#125;</span><br><span class="line">      block_offset_ = <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// Invariant: we never leave &lt; kHeaderSize bytes in a block.</span></span><br><span class="line">    <span class="built_in">assert</span>(kBlockSize - block_offset_ - kHeaderSize &gt;= <span class="number">0</span>);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">size_t</span> avail = kBlockSize - block_offset_ - kHeaderSize;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">size_t</span> fragment_length = (left &lt; avail) ? left : avail;</span><br><span class="line"></span><br><span class="line">    RecordType type;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">bool</span> end = (left == fragment_length);</span><br><span class="line">    <span class="keyword">if</span> (begin &amp;&amp; end) &#123;</span><br><span class="line">      type = kFullType;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (begin) &#123;</span><br><span class="line">      type = kFirstType;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (end) &#123;</span><br><span class="line">      type = kLastType;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      type = kMiddleType;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    s = <span class="built_in">EmitPhysicalRecord</span>(type, ptr, fragment_length);</span><br><span class="line">    ptr += fragment_length;</span><br><span class="line">    left -= fragment_length;</span><br><span class="line">    begin = <span class="literal">false</span>;</span><br><span class="line">  &#125; <span class="keyword">while</span> (s.<span class="built_in">ok</span>() &amp;&amp; left &gt; <span class="number">0</span>);</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>函数首先会计算当前 Block 剩余空间大小 <code>leftover</code>，如果连 Header 都没法写进去，就直接填充 0 进去，后期读取时会直接过滤掉。而后计算可用的空间大小 <code>avail</code> 和当前写入的长度 <code>fragment_length</code> 以及对应的记录类型 <code>type</code>，最后调用 <code>EmitPhysicalRecord</code> 刷入文件。这种方式可以保证写 Record 时按照 <code>BlockSize</code> 对齐。</p>
+<p>综上来看，写入时首先会把 <code>WriteBatch::rep_</code> 对齐地追加到日志中，写入时做了合适的切分，并且加入了 CRC 校验。有写肯定有读，当进行恢复操作时就会读取上述日志，<code>Log::Reader</code> 代码实现位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/log_reader.h"><code>db/log_reader.h</code></a> 和 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/log_reader.cc"><code>db/log_reader.cc</code></a>，读取的过程即为写入的逆过程</p>
+ 
+      <!-- reward -->
+      
+    </div>
+    
+
+    <!-- copyright -->
+    
+    <div class="declare">
+      <ul class="post-copyright">
+        <li>
+          <i class="ri-copyright-line"></i>
+          <strong>Copyright： </strong>
+          
+          Copyright is owned by the author. For commercial reprints, please contact the author for authorization. For non-commercial reprints, please indicate the source.
+          
+        </li>
+      </ul>
+    </div>
+    
+    <footer class="article-footer">
+       
+<div class="share-btn">
+      <span class="share-sns share-outer">
+        <i class="ri-share-forward-line"></i>
+        分享
+      </span>
+      <div class="share-wrap">
+        <i class="arrow"></i>
+        <div class="share-icons">
+          
+          <a class="weibo share-sns" href="javascript:;" data-type="weibo">
+            <i class="ri-weibo-fill"></i>
+          </a>
+          <a class="weixin share-sns wxFab" href="javascript:;" data-type="weixin">
+            <i class="ri-wechat-fill"></i>
+          </a>
+          <a class="qq share-sns" href="javascript:;" data-type="qq">
+            <i class="ri-qq-fill"></i>
+          </a>
+          <a class="douban share-sns" href="javascript:;" data-type="douban">
+            <i class="ri-douban-line"></i>
+          </a>
+          <!-- <a class="qzone share-sns" href="javascript:;" data-type="qzone">
+            <i class="icon icon-qzone"></i>
+          </a> -->
+          
+          <a class="facebook share-sns" href="javascript:;" data-type="facebook">
+            <i class="ri-facebook-circle-fill"></i>
+          </a>
+          <a class="twitter share-sns" href="javascript:;" data-type="twitter">
+            <i class="ri-twitter-fill"></i>
+          </a>
+          <a class="google share-sns" href="javascript:;" data-type="google">
+            <i class="ri-google-fill"></i>
+          </a>
+        </div>
+      </div>
+</div>
+
+<div class="wx-share-modal">
+    <a class="modal-close" href="javascript:;"><i class="ri-close-circle-line"></i></a>
+    <p>扫一扫，分享到微信</p>
+    <div class="wx-qrcode">
+      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%943.%E6%97%A5%E5%BF%97/" alt="微信分享二维码">
+    </div>
+</div>
+
+<div id="share-mask"></div>  
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LevelDB/" rel="tag">LevelDB</a></li></ul>
+
+    </footer>
+  </div>
+
+   
+  <nav class="article-nav">
+    
+      <a href="/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%944.%E5%86%85%E5%AD%98%E6%95%B0%E6%8D%AE%E5%BA%93/" class="article-nav-link">
+        <strong class="article-nav-caption">上一篇</strong>
+        <div class="article-nav-title">
+          
+            LevelDB源码分析——4.内存数据库
+          
+        </div>
+      </a>
+    
+    
+      <a href="/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD%20(copy)/" class="article-nav-link">
+        <strong class="article-nav-caption">下一篇</strong>
+        <div class="article-nav-title">LevelDB源码分析——2.基本的数据结构续</div>
+      </a>
+    
+  </nav>
+
+   
+<!-- valine评论 -->
+<div id="vcomments-box">
+  <div id="vcomments"></div>
+</div>
+<script src="//cdn1.lncld.net/static/js/3.0.4/av-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/valine@1.4.14/dist/Valine.min.js"></script>
+<script>
+  new Valine({
+    el: "#vcomments",
+    app_id: "NSGUA2zFQlabQAWLXHM8G89r-MdYXbMMI",
+    app_key: "dxEn5Cz3tIz4zHFNpVdfQWgB",
+    path: window.location.pathname,
+    avatar: "monsterid",
+    placeholder: "给我的文章加点评论吧~",
+    recordIP: true,
+  });
+  const infoEle = document.querySelector("#vcomments .info");
+  if (infoEle && infoEle.childNodes && infoEle.childNodes.length > 0) {
+    infoEle.childNodes.forEach(function (item) {
+      item.parentNode.removeChild(item);
+    });
+  }
+</script>
+<style>
+  #vcomments-box {
+    padding: 5px 30px;
+  }
+
+  @media screen and (max-width: 800px) {
+    #vcomments-box {
+      padding: 5px 0px;
+    }
+  }
+
+  #vcomments-box #vcomments {
+    background-color: #fff;
+  }
+
+  .v .vlist .vcard .vh {
+    padding-right: 20px;
+  }
+
+  .v .vlist .vcard {
+    padding-left: 10px;
+  }
+</style>
+
+ 
+   
+     
+</article>
+
+</section>
+      <footer class="footer">
+  <div class="outer">
+    <ul>
+      <li>
+        Copyrights &copy;
+        2021-2022
+        <i class="ri-heart-fill heart_icon"></i> Xufei Pan
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        
+        Powered by <a href="https://hexo.io" target="_blank">Hexo</a>
+        <span class="division">|</span>
+        Theme - <a href="https://github.com/Shen-Yu/hexo-theme-ayer" target="_blank">Ayer</a>
+        
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        <span>
+  <span><i class="ri-user-3-fill"></i>Visitors:<span id="busuanzi_value_site_uv"></span></span>
+  <span class="division">|</span>
+  <span><i class="ri-eye-fill"></i>Views:<span id="busuanzi_value_page_pv"></span></span>
+</span>
+        
+      </li>
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      <li>
+        <!-- cnzz统计 -->
+        
+        <script type="text/javascript" src='https://v1.cnzz.com/z_stat.php?id=1280023895&amp;web_id=1280023895'></script>
+        
+      </li>
+    </ul>
+  </div>
+</footer>
+      <div class="float_btns">
+        <div class="totop" id="totop">
+  <i class="ri-arrow-up-line"></i>
+</div>
+
+<div class="todark" id="todark">
+  <i class="ri-moon-line"></i>
+</div>
+
+      </div>
+    </main>
+    <aside class="sidebar on">
+      <button class="navbar-toggle"></button>
+<nav class="navbar">
+  
+  <div class="logo">
+    <a href="/"><img src="/images/ayer-side.svg" alt="Gasol"></a>
+  </div>
+  
+  <ul class="nav nav-main">
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/">主页</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/archives">目录</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/categories">分类</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags">标签</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags/photos/">图片</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/friends">友链</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/2021/about">关于我</a>
+    </li>
+    
+  </ul>
+</nav>
+<nav class="navbar navbar-bottom">
+  <ul class="nav">
+    <li class="nav-item">
+      
+      <a class="nav-item-link nav-item-search"  title="Search">
+        <i class="ri-search-line"></i>
+      </a>
+      
+      
+      <a class="nav-item-link" target="_blank" href="/atom.xml" title="RSS Feed">
+        <i class="ri-rss-line"></i>
+      </a>
+      
+    </li>
+  </ul>
+</nav>
+<div class="search-form-wrap">
+  <div class="local-search local-search-plugin">
+  <input type="search" id="local-search-input" class="local-search-input" placeholder="Search...">
+  <div id="local-search-result" class="local-search-result"></div>
+</div>
+</div>
+    </aside>
+    <div id="mask"></div>
+
+<!-- #reward -->
+<div id="reward">
+  <span class="close"><i class="ri-close-line"></i></span>
+  <p class="reward-p"><i class="ri-cup-line"></i>请我喝杯奶茶吧~</p>
+  <div class="reward-box">
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/alipay.jpg">
+      <span class="reward-type">支付宝</span>
+    </div>
+    
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/wechat.jpg">
+      <span class="reward-type">微信</span>
+    </div>
+    
+  </div>
+</div>
+    
+<script src="/js/jquery-2.0.3.min.js"></script>
+ 
+<script src="/js/lazyload.min.js"></script>
+
+<!-- Tocbot -->
+ 
+<script src="/js/tocbot.min.js"></script>
+
+<script>
+  tocbot.init({
+    tocSelector: ".tocbot",
+    contentSelector: ".article-entry",
+    headingSelector: "h1, h2, h3, h4, h5, h6",
+    hasInnerContainers: true,
+    scrollSmooth: true,
+    scrollContainer: "main",
+    positionFixedSelector: ".tocbot",
+    positionFixedClass: "is-position-fixed",
+    fixedSidebarOffset: "auto",
+  });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.js"></script>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.css"
+/>
+<script src="https://cdn.jsdelivr.net/npm/justifiedGallery@3.7.0/dist/js/jquery.justifiedGallery.min.js"></script>
+
+<script src="/dist/main.js"></script>
+
+<!-- ImageViewer -->
+ <!-- Root element of PhotoSwipe. Must have class pswp. -->
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    <!-- Background of PhotoSwipe. 
+         It's a separate element as animating opacity is faster than rgba(). -->
+    <div class="pswp__bg"></div>
+
+    <!-- Slides wrapper with overflow:hidden. -->
+    <div class="pswp__scroll-wrap">
+
+        <!-- Container that holds slides. 
+            PhotoSwipe keeps only 3 of them in the DOM to save memory.
+            Don't modify these 3 pswp__item elements, data is added later on. -->
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        <!-- Default (PhotoSwipeUI_Default) interface on top of sliding area. Can be changed. -->
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                <!--  Controls are self-explanatory. Order can be changed. -->
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" style="display:none" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                <!-- Preloader demo http://codepen.io/dimsemenov/pen/yyBWoR -->
+                <!-- element will get class pswp__preloader--active when preloader is running -->
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css">
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"></script>
+
+<script>
+    function viewer_init() {
+        let pswpElement = document.querySelectorAll('.pswp')[0];
+        let $imgArr = document.querySelectorAll(('.article-entry img:not(.reward-img)'))
+
+        $imgArr.forEach(($em, i) => {
+            $em.onclick = () => {
+                // slider展开状态
+                // todo: 这样不好，后面改成状态
+                if (document.querySelector('.left-col.show')) return
+                let items = []
+                $imgArr.forEach(($em2, i2) => {
+                    let img = $em2.getAttribute('data-idx', i2)
+                    let src = $em2.getAttribute('data-target') || $em2.getAttribute('src')
+                    let title = $em2.getAttribute('alt')
+                    // 获得原图尺寸
+                    const image = new Image()
+                    image.src = src
+                    items.push({
+                        src: src,
+                        w: image.width || $em2.width,
+                        h: image.height || $em2.height,
+                        title: title
+                    })
+                })
+                var gallery = new PhotoSwipe(pswpElement, PhotoSwipeUI_Default, items, {
+                    index: parseInt(i)
+                });
+                gallery.init()
+            }
+        })
+    }
+    viewer_init()
+</script> 
+<!-- MathJax -->
+
+<!-- Katex -->
+
+<!-- busuanzi  -->
+ 
+<script src="/js/busuanzi-2.3.pure.min.js"></script>
+ 
+<!-- ClickLove -->
+ 
+<script src="/js/clickLove.js"></script>
+ 
+<!-- ClickBoom1 -->
+
+<!-- ClickBoom2 -->
+
+<!-- CodeCopy -->
+ 
+<link rel="stylesheet" href="/css/clipboard.css">
+ <script src="https://cdn.jsdelivr.net/npm/clipboard@2/dist/clipboard.min.js"></script>
+<script>
+  function wait(callback, seconds) {
+    var timelag = null;
+    timelag = window.setTimeout(callback, seconds);
+  }
+  !function (e, t, a) {
+    var initCopyCode = function(){
+      var copyHtml = '';
+      copyHtml += '<button class="btn-copy" data-clipboard-snippet="">';
+      copyHtml += '<i class="ri-file-copy-2-line"></i><span>COPY</span>';
+      copyHtml += '</button>';
+      $(".highlight .code pre").before(copyHtml);
+      $(".article pre code").before(copyHtml);
+      var clipboard = new ClipboardJS('.btn-copy', {
+        target: function(trigger) {
+          return trigger.nextElementSibling;
+        }
+      });
+      clipboard.on('success', function(e) {
+        let $btn = $(e.trigger);
+        $btn.addClass('copied');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-checkbox-circle-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPIED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-checkbox-circle-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+      clipboard.on('error', function(e) {
+        e.clearSelection();
+        let $btn = $(e.trigger);
+        $btn.addClass('copy-failed');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-time-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPY FAILED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-time-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+    }
+    initCopyCode();
+  }(window, document);
+</script>
+ 
+<!-- CanvasBackground -->
+ 
+<script src="/js/dz.js"></script>
+ 
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ theme: "forest" });
+  }
+</script>
+
+
+    
+  </div>
+</body>
+
+</html>

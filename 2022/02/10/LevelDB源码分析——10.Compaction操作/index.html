@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+
+
+<html lang="en">
+  
+
+    <head>
+      <meta charset="utf-8" />
+        
+      <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1"
+      />
+      <title>LevelDB源码分析——10.Compaction操作 |  Gasol</title>
+  <meta name="generator" content="hexo-theme-ayer">
+      
+      <link rel="shortcut icon" href="/favicon.ico" />
+       
+<link rel="stylesheet" href="/dist/main.css">
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/Shen-Yu/cdn/css/remixicon.min.css"
+      />
+      
+<link rel="stylesheet" href="/css/custom.css">
+ 
+      <script src="https://cdn.jsdelivr.net/npm/pace-js@1.0.2/pace.min.js"></script>
+       
+ 
+
+      <!-- mermaid -->
+      
+    <link rel="alternate" href="/atom.xml" title="Gasol" type="application/atom+xml">
+</head>
+  </html>
+</html>
+
+
+<body>
+  <div id="app">
+    
+      
+    <main class="content on">
+      <section class="outer">
+  <article
+  id="post-LevelDB源码分析——10.Compaction操作"
+  class="article article-type-post"
+  itemscope
+  itemprop="blogPost"
+  data-scroll-reveal
+>
+  <div class="article-inner">
+    
+    <header class="article-header">
+       
+<h1 class="article-title sea-center" style="border-left:0" itemprop="name">
+  LevelDB源码分析——10.Compaction操作
+</h1>
+ 
+
+      
+    </header>
+     
+    <div class="article-meta">
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%9410.Compaction%E6%93%8D%E4%BD%9C/" class="article-date">
+  <time datetime="2022-02-10T10:30:30.000Z" itemprop="datePublished">2022-02-10</time>
+</a> 
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/LevelDB/">LevelDB</a>
+  </div>
+  
+<div class="word_count">
+    <span class="post-time">
+        <span class="post-meta-item-icon">
+            <i class="ri-quill-pen-line"></i>
+            <span class="post-meta-item-text"> Word count:</span>
+            <span class="post-count">4k</span>
+        </span>
+    </span>
+
+    <span class="post-time">
+        &nbsp; | &nbsp;
+        <span class="post-meta-item-icon">
+            <i class="ri-book-open-line"></i>
+            <span class="post-meta-item-text"> Reading time≈</span>
+            <span class="post-count">21 min</span>
+        </span>
+    </span>
+</div>
+ 
+    </div>
+      
+    <div class="tocbot"></div>
+
+
+
+
+  
+    <div class="article-entry" itemprop="articleBody">
+       
+  <h2 id="十-Compaction操作"><a href="#十-Compaction操作" class="headerlink" title="十.Compaction操作"></a>十.Compaction操作</h2><p>LevelDB 源码分析系列也步入尾声，本篇将分析 LevelDB 中至关重要的 Compaction 过程，依然从代码的角度出发。建议大家 了解 Compaction 的作用和过程。</p>
+<h3 id="1-触发-Compaction"><a href="#1-触发-Compaction" class="headerlink" title="1. 触发 Compaction"></a>1. 触发 Compaction</h3><p>本系列第三篇中描述了内存数据库转为 Sorted Table 的过程，其中会执行 <code>DBImpl::BackgroundCompaction</code> 这一后台任务：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::BackgroundCompaction</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (imm_ != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    <span class="built_in">CompactMemTable</span>();</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  Compaction* c;</span><br><span class="line">  <span class="keyword">bool</span> is_manual = (manual_compaction_ != <span class="literal">nullptr</span>);</span><br><span class="line">  InternalKey manual_end;</span><br><span class="line">  <span class="keyword">if</span> (is_manual) &#123;</span><br><span class="line">    ...</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    c = versions_-&gt;<span class="built_in">PickCompaction</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>现在假设 <code>imm_</code> 为空，并且不考虑手动 Compaction，那么这里会执行 <code>versions_-&gt;PickCompaction</code> 去选择一个 Compaction，其实现位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/version_set.cc"><code>db/version_set.cc</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Compaction* <span class="title">VersionSet::PickCompaction</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  Compaction* c;</span><br><span class="line">  <span class="keyword">int</span> level;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// We prefer compactions triggered by too much data in a level over</span></span><br><span class="line">  <span class="comment">// the compactions triggered by seeks.</span></span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">bool</span> size_compaction = (current_-&gt;compaction_score_ &gt;= <span class="number">1</span>);</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">bool</span> seek_compaction = (current_-&gt;file_to_compact_ != <span class="literal">nullptr</span>);</span><br><span class="line">  ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里会有两种需要 Compaction 的情况，一种是某一 Level 的分数超过了 1，一种是某一个文件的无效查询次数超过阈值。分数的计算位于版本更新之后的 <code>VersionSet::Finalize</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">VersionSet::Finalize</span><span class="params">(Version* v)</span> </span>&#123;</span><br><span class="line">  <span class="comment">// Precomputed best level for next compaction</span></span><br><span class="line">  <span class="keyword">int</span> best_level = <span class="number">-1</span>;</span><br><span class="line">  <span class="keyword">double</span> best_score = <span class="number">-1</span>;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> level = <span class="number">0</span>; level &lt; config::kNumLevels - <span class="number">1</span>; level++) &#123;</span><br><span class="line">    <span class="keyword">double</span> score;</span><br><span class="line">    <span class="keyword">if</span> (level == <span class="number">0</span>) &#123;</span><br><span class="line">      <span class="comment">// We treat level-0 specially by bounding the number of files</span></span><br><span class="line">      <span class="comment">// instead of number of bytes for two reasons:</span></span><br><span class="line">      <span class="comment">//</span></span><br><span class="line">      <span class="comment">// (1) With larger write-buffer sizes, it is nice not to do too</span></span><br><span class="line">      <span class="comment">// many level-0 compactions.</span></span><br><span class="line">      <span class="comment">//</span></span><br><span class="line">      <span class="comment">// (2) The files in level-0 are merged on every read and</span></span><br><span class="line">      <span class="comment">// therefore we wish to avoid too many files when the individual</span></span><br><span class="line">      <span class="comment">// file size is small (perhaps because of a small write-buffer</span></span><br><span class="line">      <span class="comment">// setting, or very high compression ratios, or lots of</span></span><br><span class="line">      <span class="comment">// overwrites/deletions).</span></span><br><span class="line">      score = v-&gt;files_[level].<span class="built_in">size</span>() /</span><br><span class="line">              <span class="keyword">static_cast</span>&lt;<span class="keyword">double</span>&gt;(config::kL0_CompactionTrigger);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      <span class="comment">// Compute the ratio of current size to size limit.</span></span><br><span class="line">      <span class="keyword">const</span> <span class="keyword">uint64_t</span> level_bytes = <span class="built_in">TotalFileSize</span>(v-&gt;files_[level]);</span><br><span class="line">      score =</span><br><span class="line">          <span class="keyword">static_cast</span>&lt;<span class="keyword">double</span>&gt;(level_bytes) / <span class="built_in">MaxBytesForLevel</span>(options_, level);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (score &gt; best_score) &#123;</span><br><span class="line">      best_level = level;</span><br><span class="line">      best_score = score;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  v-&gt;compaction_level_ = best_level;</span><br><span class="line">  v-&gt;compaction_score_ = best_score;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>对于 0 层文件，当文件数量超过阈值（默认 4）时触发 Compaction；对于其他层的文件，当文件的总大小超过阈值时触发 Compaction。而一个文件的的查询次数阈值定义于 <code>VersionSet::Builder::Apply</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// We arrange to automatically compact this file after</span></span><br><span class="line"><span class="comment">// a certain number of seeks.  Let&#x27;s assume:</span></span><br><span class="line"><span class="comment">//   (1) One seek costs 10ms</span></span><br><span class="line"><span class="comment">//   (2) Writing or reading 1MB costs 10ms (100MB/s)</span></span><br><span class="line"><span class="comment">//   (3) A compaction of 1MB does 25MB of IO:</span></span><br><span class="line"><span class="comment">//         1MB read from this level</span></span><br><span class="line"><span class="comment">//         10-12MB read from next level (boundaries may be misaligned)</span></span><br><span class="line"><span class="comment">//         10-12MB written to next level</span></span><br><span class="line"><span class="comment">// This implies that 25 seeks cost the same as the compaction</span></span><br><span class="line"><span class="comment">// of 1MB of data.  I.e., one seek costs approximately the</span></span><br><span class="line"><span class="comment">// same as the compaction of 40KB of data.  We are a little</span></span><br><span class="line"><span class="comment">// conservative and allow approximately one seek for every 16KB</span></span><br><span class="line"><span class="comment">// of data before triggering a compaction.</span></span><br><span class="line">f-&gt;allowed_seeks = <span class="keyword">static_cast</span>&lt;<span class="keyword">int</span>&gt;((f-&gt;file_size / <span class="number">16384U</span>));</span><br><span class="line"><span class="keyword">if</span> (f-&gt;allowed_seeks &lt; <span class="number">100</span>) f-&gt;allowed_seeks = <span class="number">100</span>;</span><br></pre></td></tr></table></figure>
+
+<p>英文注释写得十分详细。首先假设：</p>
+<ol>
+<li>一次查询耗时 10ms；</li>
+<li>读/写 1MB 耗时 10ms （假设速度 100MB/s）；</li>
+<li>1MB 的 Compaction 需要做 25 MB 的 IO<ol>
+<li>本层读 1MB；</li>
+<li>下一层读 10-12 MB</li>
+<li>Compaction 后写 10-12 MB</li>
+</ol>
+</li>
+</ol>
+<p>整体来看，1MB 的数据做 25 次查询和 Compaction 的时间差不多，1 次查询就相当于做 40KB 数据的 Compaction。LevelDB 将其设为更保守的 16KB，进而一个文件的查询次数阈值设定为 <code>FileSize / 16KB</code>。当一次查询中读取了多个文件，则将第一个文件的查询次数 +1，直到其超过阈值、触发 Compaction。继续看 <code>VersionSet::PickCompaction</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Compaction* <span class="title">VersionSet::PickCompaction</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  ...</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (size_compaction) &#123;</span><br><span class="line">    level = current_-&gt;compaction_level_;</span><br><span class="line">    <span class="built_in">assert</span>(level &gt;= <span class="number">0</span>);</span><br><span class="line">    <span class="built_in">assert</span>(level + <span class="number">1</span> &lt; config::kNumLevels);</span><br><span class="line">    c = <span class="keyword">new</span> <span class="built_in">Compaction</span>(options_, level);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// Pick the first file that comes after compact_pointer_[level]</span></span><br><span class="line">    <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">0</span>; i &lt; current_-&gt;files_[level].<span class="built_in">size</span>(); i++) &#123;</span><br><span class="line">      FileMetaData* f = current_-&gt;files_[level][i];</span><br><span class="line">      <span class="keyword">if</span> (compact_pointer_[level].<span class="built_in">empty</span>() ||</span><br><span class="line">          icmp_.<span class="built_in">Compare</span>(f-&gt;largest.<span class="built_in">Encode</span>(), compact_pointer_[level]) &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">push_back</span>(f);</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">empty</span>()) &#123;</span><br><span class="line">      <span class="comment">// Wrap-around to the beginning of the key space</span></span><br><span class="line">      c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">push_back</span>(current_-&gt;files_[level][<span class="number">0</span>]);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (seek_compaction) &#123;</span><br><span class="line">    level = current_-&gt;file_to_compact_level_;</span><br><span class="line">    c = <span class="keyword">new</span> <span class="built_in">Compaction</span>(options_, level);</span><br><span class="line">    c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">push_back</span>(current_-&gt;file_to_compact_);</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="literal">nullptr</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  c-&gt;input_version_ = current_;</span><br><span class="line">  c-&gt;input_version_-&gt;<span class="built_in">Ref</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Files in level 0 may overlap each other, so pick up all overlapping ones</span></span><br><span class="line">  <span class="keyword">if</span> (level == <span class="number">0</span>) &#123;</span><br><span class="line">    InternalKey smallest, largest;</span><br><span class="line">    <span class="built_in">GetRange</span>(c-&gt;inputs_[<span class="number">0</span>], &amp;smallest, &amp;largest);</span><br><span class="line">    <span class="comment">// Note that the next call will discard the file we placed in</span></span><br><span class="line">    <span class="comment">// c-&gt;inputs_[0] earlier and replace it with an overlapping set</span></span><br><span class="line">    <span class="comment">// which will include the picked file.</span></span><br><span class="line">    current_-&gt;<span class="built_in">GetOverlappingInputs</span>(<span class="number">0</span>, &amp;smallest, &amp;largest, &amp;c-&gt;inputs_[<span class="number">0</span>]);</span><br><span class="line">    <span class="built_in">assert</span>(!c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">empty</span>());</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">SetupOtherInputs</span>(c);</span><br><span class="line"></span><br><span class="line">  <span class="keyword">return</span> c;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>对于数据大小触发的 Compaction，会选取 <code>compact_pointer_</code> 后的第一个文件作为 Compaction 对象，即本层上一次 Compaction 区间之后的文件；而查询次数触发的 Compaction 其本身对应一个文件。对于 0 层文件，因为之间存在 Overlap，需要将存在重叠的文件都加入 Compaction 集合里。至此本层的文件选择完毕。</p>
+<h3 id="2-扩大-Compaction-文件集合"><a href="#2-扩大-Compaction-文件集合" class="headerlink" title="2. 扩大 Compaction 文件集合"></a>2. 扩大 Compaction 文件集合</h3><p><code>VersionSet::PickCompaction</code> 随后执行 <code>SetupOtherInputs</code> 以扩大 Compaction 文件集合：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// Finds the largest key in a vector of files. Returns true if files it not</span></span><br><span class="line"><span class="comment">// empty.</span></span><br><span class="line"><span class="function"><span class="keyword">bool</span> <span class="title">FindLargestKey</span><span class="params">(<span class="keyword">const</span> InternalKeyComparator&amp; icmp,</span></span></span><br><span class="line"><span class="params"><span class="function">                    <span class="keyword">const</span> std::vector&lt;FileMetaData*&gt;&amp; files,</span></span></span><br><span class="line"><span class="params"><span class="function">                    InternalKey* largest_key)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">if</span> (files.<span class="built_in">empty</span>()) &#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">  &#125;</span><br><span class="line">  *largest_key = files[<span class="number">0</span>]-&gt;largest;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">1</span>; i &lt; files.<span class="built_in">size</span>(); ++i) &#123;</span><br><span class="line">    FileMetaData* f = files[i];</span><br><span class="line">    <span class="keyword">if</span> (icmp.<span class="built_in">Compare</span>(f-&gt;largest, *largest_key) &gt; <span class="number">0</span>) &#123;</span><br><span class="line">      *largest_key = f-&gt;largest;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Finds minimum file b2=(l2, u2) in level file for which l2 &gt; u1 and</span></span><br><span class="line"><span class="comment">// user_key(l2) = user_key(u1)</span></span><br><span class="line"><span class="function">FileMetaData* <span class="title">FindSmallestBoundaryFile</span><span class="params">(</span></span></span><br><span class="line"><span class="params"><span class="function">    <span class="keyword">const</span> InternalKeyComparator&amp; icmp,</span></span></span><br><span class="line"><span class="params"><span class="function">    <span class="keyword">const</span> std::vector&lt;FileMetaData*&gt;&amp; level_files,</span></span></span><br><span class="line"><span class="params"><span class="function">    <span class="keyword">const</span> InternalKey&amp; largest_key)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">const</span> Comparator* user_cmp = icmp.<span class="built_in">user_comparator</span>();</span><br><span class="line">  FileMetaData* smallest_boundary_file = <span class="literal">nullptr</span>;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">0</span>; i &lt; level_files.<span class="built_in">size</span>(); ++i) &#123;</span><br><span class="line">    FileMetaData* f = level_files[i];</span><br><span class="line">    <span class="keyword">if</span> (icmp.<span class="built_in">Compare</span>(f-&gt;smallest, largest_key) &gt; <span class="number">0</span> &amp;&amp;</span><br><span class="line">        user_cmp-&gt;<span class="built_in">Compare</span>(f-&gt;smallest.<span class="built_in">user_key</span>(), largest_key.<span class="built_in">user_key</span>()) ==</span><br><span class="line">            <span class="number">0</span>) &#123;</span><br><span class="line">      <span class="keyword">if</span> (smallest_boundary_file == <span class="literal">nullptr</span> ||</span><br><span class="line">          icmp.<span class="built_in">Compare</span>(f-&gt;smallest, smallest_boundary_file-&gt;smallest) &lt; <span class="number">0</span>) &#123;</span><br><span class="line">        smallest_boundary_file = f;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> smallest_boundary_file;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Extracts the largest file b1 from |compaction_files| and then searches for a</span></span><br><span class="line"><span class="comment">// b2 in |level_files| for which user_key(u1) = user_key(l2). If it finds such a</span></span><br><span class="line"><span class="comment">// file b2 (known as a boundary file) it adds it to |compaction_files| and then</span></span><br><span class="line"><span class="comment">// searches again using this new upper bound.</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// If there are two blocks, b1=(l1, u1) and b2=(l2, u2) and</span></span><br><span class="line"><span class="comment">// user_key(u1) = user_key(l2), and if we compact b1 but not b2 then a</span></span><br><span class="line"><span class="comment">// subsequent get operation will yield an incorrect result because it will</span></span><br><span class="line"><span class="comment">// return the record from b2 in level i rather than from b1 because it searches</span></span><br><span class="line"><span class="comment">// level by level for records matching the supplied user key.</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// parameters:</span></span><br><span class="line"><span class="comment">//   in     level_files:      List of files to search for boundary files.</span></span><br><span class="line"><span class="comment">//   in/out compaction_files: List of files to extend by adding boundary files.</span></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">AddBoundaryInputs</span><span class="params">(<span class="keyword">const</span> InternalKeyComparator&amp; icmp,</span></span></span><br><span class="line"><span class="params"><span class="function">                       <span class="keyword">const</span> std::vector&lt;FileMetaData*&gt;&amp; level_files,</span></span></span><br><span class="line"><span class="params"><span class="function">                       std::vector&lt;FileMetaData*&gt;* compaction_files)</span> </span>&#123;</span><br><span class="line">  InternalKey largest_key;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Quick return if compaction_files is empty.</span></span><br><span class="line">  <span class="keyword">if</span> (!<span class="built_in">FindLargestKey</span>(icmp, *compaction_files, &amp;largest_key)) &#123;</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">bool</span> continue_searching = <span class="literal">true</span>;</span><br><span class="line">  <span class="keyword">while</span> (continue_searching) &#123;</span><br><span class="line">    FileMetaData* smallest_boundary_file =</span><br><span class="line">        <span class="built_in">FindSmallestBoundaryFile</span>(icmp, level_files, largest_key);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// If a boundary file was found advance largest_key, otherwise we&#x27;re done.</span></span><br><span class="line">    <span class="keyword">if</span> (smallest_boundary_file != <span class="literal">NULL</span>) &#123;</span><br><span class="line">      compaction_files-&gt;<span class="built_in">push_back</span>(smallest_boundary_file);</span><br><span class="line">      largest_key = smallest_boundary_file-&gt;largest;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      continue_searching = <span class="literal">false</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">VersionSet::SetupOtherInputs</span><span class="params">(Compaction* c)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">int</span> level = c-&gt;<span class="built_in">level</span>();</span><br><span class="line">  InternalKey smallest, largest;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">AddBoundaryInputs</span>(icmp_, current_-&gt;files_[level], &amp;c-&gt;inputs_[<span class="number">0</span>]);</span><br><span class="line">  ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>首先执行的是 <code>AddBoundaryInputs</code>。其英文注释中解释地非常详细：当 Compaction 的范围为 [l1, u1][<em>l</em>1,<em>u</em>1] 时，该范围的数据将会被移动到 Level+1。如果当前 Level 存在文件 [l2, u2][<em>l</em>2,<em>u</em>2]，并且 <code>user_key(u1) = user_key(l2)</code>，那么下一次查询 <code>user_key(u1)</code> 时会在 Level 层提前返回旧的数据！故需要将受影响的文件全部加到 Compaction 文件范围中。继续看 <code>VersionSet::SetupOtherInputs</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">VersionSet::SetupOtherInputs</span><span class="params">(Compaction* c)</span> </span>&#123;</span><br><span class="line">  ...</span><br><span class="line">  <span class="built_in">GetRange</span>(c-&gt;inputs_[<span class="number">0</span>], &amp;smallest, &amp;largest);</span><br><span class="line"></span><br><span class="line">  current_-&gt;<span class="built_in">GetOverlappingInputs</span>(level + <span class="number">1</span>, &amp;smallest, &amp;largest,</span><br><span class="line">                                 &amp;c-&gt;inputs_[<span class="number">1</span>]);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Get entire range covered by compaction</span></span><br><span class="line">  InternalKey all_start, all_limit;</span><br><span class="line">  <span class="built_in">GetRange2</span>(c-&gt;inputs_[<span class="number">0</span>], c-&gt;inputs_[<span class="number">1</span>], &amp;all_start, &amp;all_limit);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// See if we can grow the number of inputs in &quot;level&quot; without</span></span><br><span class="line">  <span class="comment">// changing the number of &quot;level+1&quot; files we pick up.</span></span><br><span class="line">  <span class="keyword">if</span> (!c-&gt;inputs_[<span class="number">1</span>].<span class="built_in">empty</span>()) &#123;</span><br><span class="line">    std::vector&lt;FileMetaData*&gt; expanded0;</span><br><span class="line">    current_-&gt;<span class="built_in">GetOverlappingInputs</span>(level, &amp;all_start, &amp;all_limit, &amp;expanded0);</span><br><span class="line">    <span class="built_in">AddBoundaryInputs</span>(icmp_, current_-&gt;files_[level], &amp;expanded0);</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">int64_t</span> inputs0_size = <span class="built_in">TotalFileSize</span>(c-&gt;inputs_[<span class="number">0</span>]);</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">int64_t</span> inputs1_size = <span class="built_in">TotalFileSize</span>(c-&gt;inputs_[<span class="number">1</span>]);</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">int64_t</span> expanded0_size = <span class="built_in">TotalFileSize</span>(expanded0);</span><br><span class="line">    <span class="keyword">if</span> (expanded0.<span class="built_in">size</span>() &gt; c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">size</span>() &amp;&amp;</span><br><span class="line">        inputs1_size + expanded0_size &lt;</span><br><span class="line">            <span class="built_in">ExpandedCompactionByteSizeLimit</span>(options_)) &#123;</span><br><span class="line">      InternalKey new_start, new_limit;</span><br><span class="line">      <span class="built_in">GetRange</span>(expanded0, &amp;new_start, &amp;new_limit);</span><br><span class="line">      std::vector&lt;FileMetaData*&gt; expanded1;</span><br><span class="line">      current_-&gt;<span class="built_in">GetOverlappingInputs</span>(level + <span class="number">1</span>, &amp;new_start, &amp;new_limit,</span><br><span class="line">                                     &amp;expanded1);</span><br><span class="line">      <span class="keyword">if</span> (expanded1.<span class="built_in">size</span>() == c-&gt;inputs_[<span class="number">1</span>].<span class="built_in">size</span>()) &#123;</span><br><span class="line">        <span class="built_in">Log</span>(options_-&gt;info_log,</span><br><span class="line">            <span class="string">&quot;Expanding@%d %d+%d (%ld+%ld bytes) to %d+%d (%ld+%ld bytes)\n&quot;</span>,</span><br><span class="line">            level, <span class="built_in"><span class="keyword">int</span></span>(c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">size</span>()), <span class="built_in"><span class="keyword">int</span></span>(c-&gt;inputs_[<span class="number">1</span>].<span class="built_in">size</span>()),</span><br><span class="line">            <span class="built_in"><span class="keyword">long</span></span>(inputs0_size), <span class="built_in"><span class="keyword">long</span></span>(inputs1_size), <span class="built_in"><span class="keyword">int</span></span>(expanded0.<span class="built_in">size</span>()),</span><br><span class="line">            <span class="built_in"><span class="keyword">int</span></span>(expanded1.<span class="built_in">size</span>()), <span class="built_in"><span class="keyword">long</span></span>(expanded0_size), <span class="built_in"><span class="keyword">long</span></span>(inputs1_size));</span><br><span class="line">        smallest = new_start;</span><br><span class="line">        largest = new_limit;</span><br><span class="line">        c-&gt;inputs_[<span class="number">0</span>] = expanded0;</span><br><span class="line">        c-&gt;inputs_[<span class="number">1</span>] = expanded1;</span><br><span class="line">        <span class="built_in">GetRange2</span>(c-&gt;inputs_[<span class="number">0</span>], c-&gt;inputs_[<span class="number">1</span>], &amp;all_start, &amp;all_limit);</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Compute the set of grandparent files that overlap this compaction</span></span><br><span class="line">  <span class="comment">// (parent == level+1; grandparent == level+2)</span></span><br><span class="line">  <span class="keyword">if</span> (level + <span class="number">2</span> &lt; config::kNumLevels) &#123;</span><br><span class="line">    current_-&gt;<span class="built_in">GetOverlappingInputs</span>(level + <span class="number">2</span>, &amp;all_start, &amp;all_limit,</span><br><span class="line">                                   &amp;c-&gt;grandparents_);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Update the place where we will do the next compaction for this level.</span></span><br><span class="line">  <span class="comment">// We update this immediately instead of waiting for the VersionEdit</span></span><br><span class="line">  <span class="comment">// to be applied so that if the compaction fails, we will try a different</span></span><br><span class="line">  <span class="comment">// key range next time.</span></span><br><span class="line">  compact_pointer_[level] = largest.<span class="built_in">Encode</span>().<span class="built_in">ToString</span>();</span><br><span class="line">  c-&gt;edit_.<span class="built_in">SetCompactPointer</span>(level, largest);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>首先在 Level+1 层将所有存在重叠的文件加入 Compaction 文件集合里，更新 Compaction 的区间 <code>[all_start, all_limit]</code>。再回过头来使用新区间获得 Level 层重叠的文件 <code>expanded0</code>，如果新的数据大小在阈值以内且不会改变 Level+1 层选择的文件，那么则将 Level 层的文件集合更新为 <code>expanded0</code>。最后将当前 Level 的 <code>compact_pointer_</code> 设为当前 Compaction 的最大键。至此扩大 Compaction 文件集合结束，<code>VersionSet::PickCompaction</code> 也返回了 Compaction 对象。</p>
+<h3 id="3-执行-Compaction"><a href="#3-执行-Compaction" class="headerlink" title="3. 执行 Compaction"></a>3. 执行 Compaction</h3><p>回到 <code>DBImpl::BackgroundCompaction</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">DBImpl</span>:</span>:CompactionState &#123;</span><br><span class="line">  <span class="comment">// Files produced by compaction</span></span><br><span class="line">  <span class="class"><span class="keyword">struct</span> <span class="title">Output</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint64_t</span> number;</span><br><span class="line">    <span class="keyword">uint64_t</span> file_size;</span><br><span class="line">    InternalKey smallest, largest;</span><br><span class="line">  &#125;;</span><br><span class="line"></span><br><span class="line">  <span class="function">Output* <span class="title">current_output</span><span class="params">()</span> </span>&#123; <span class="keyword">return</span> &amp;outputs[outputs.<span class="built_in">size</span>() - <span class="number">1</span>]; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">explicit</span> <span class="title">CompactionState</span><span class="params">(Compaction* c)</span></span></span><br><span class="line"><span class="function">      : compaction(c),</span></span><br><span class="line"><span class="function">        smallest_snapshot(<span class="number">0</span>),</span></span><br><span class="line"><span class="function">        outfile(nullptr),</span></span><br><span class="line"><span class="function">        builder(nullptr),</span></span><br><span class="line"><span class="function">        total_bytes(<span class="number">0</span>) &#123;</span>&#125;</span><br><span class="line"></span><br><span class="line">  Compaction* <span class="keyword">const</span> compaction;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Sequence numbers &lt; smallest_snapshot are not significant since we</span></span><br><span class="line">  <span class="comment">// will never have to service a snapshot below smallest_snapshot.</span></span><br><span class="line">  <span class="comment">// Therefore if we have seen a sequence number S &lt;= smallest_snapshot,</span></span><br><span class="line">  <span class="comment">// we can drop all entries for the same key with sequence numbers &lt; S.</span></span><br><span class="line">  SequenceNumber smallest_snapshot;</span><br><span class="line"></span><br><span class="line">  std::vector&lt;Output&gt; outputs;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// State kept for output being generated</span></span><br><span class="line">  WritableFile* outfile;</span><br><span class="line">  TableBuilder* builder;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">uint64_t</span> total_bytes;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::BackgroundCompaction</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  ...</span><br><span class="line"></span><br><span class="line">  Status status;</span><br><span class="line">  <span class="keyword">if</span> (c == <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    <span class="comment">// Nothing to do</span></span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (!is_manual &amp;&amp; c-&gt;<span class="built_in">IsTrivialMove</span>()) &#123;</span><br><span class="line">    ...</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    CompactionState* compact = <span class="keyword">new</span> <span class="built_in">CompactionState</span>(c);</span><br><span class="line">    status = <span class="built_in">DoCompactionWork</span>(compact);</span><br><span class="line">    <span class="keyword">if</span> (!status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      <span class="built_in">RecordBackgroundError</span>(status);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="built_in">CleanupCompaction</span>(compact);</span><br><span class="line">    c-&gt;<span class="built_in">ReleaseInputs</span>();</span><br><span class="line">    <span class="built_in">DeleteObsoleteFiles</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">delete</span> c;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="comment">// Done</span></span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (shutting_down_.<span class="built_in">load</span>(std::memory_order_acquire)) &#123;</span><br><span class="line">    <span class="comment">// Ignore compaction errors found during shutting down</span></span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Compaction error: %s&quot;</span>, status.<span class="built_in">ToString</span>().<span class="built_in">c_str</span>());</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (is_manual) &#123;</span><br><span class="line">    ...</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>不考虑手动模式和 TrivialMove，接下来会根据 <code>Compaction</code> 对象构建 <code>CompactionState</code>，并执行 <code>DBImpl::DoCompactionWork</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">DBImpl::DoCompactionWork</span><span class="params">(CompactionState* compact)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">uint64_t</span> start_micros = env_-&gt;<span class="built_in">NowMicros</span>();</span><br><span class="line">  <span class="keyword">int64_t</span> imm_micros = <span class="number">0</span>;  <span class="comment">// Micros spent doing imm_ compactions</span></span><br><span class="line"></span><br><span class="line">  <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Compacting %d@%d + %d@%d files&quot;</span>,</span><br><span class="line">      compact-&gt;compaction-&gt;<span class="built_in">num_input_files</span>(<span class="number">0</span>), compact-&gt;compaction-&gt;<span class="built_in">level</span>(),</span><br><span class="line">      compact-&gt;compaction-&gt;<span class="built_in">num_input_files</span>(<span class="number">1</span>),</span><br><span class="line">      compact-&gt;compaction-&gt;<span class="built_in">level</span>() + <span class="number">1</span>);</span><br><span class="line"></span><br><span class="line">  <span class="built_in">assert</span>(versions_-&gt;<span class="built_in">NumLevelFiles</span>(compact-&gt;compaction-&gt;<span class="built_in">level</span>()) &gt; <span class="number">0</span>);</span><br><span class="line">  <span class="built_in">assert</span>(compact-&gt;builder == <span class="literal">nullptr</span>);</span><br><span class="line">  <span class="built_in">assert</span>(compact-&gt;outfile == <span class="literal">nullptr</span>);</span><br><span class="line">  <span class="keyword">if</span> (snapshots_.<span class="built_in">empty</span>()) &#123;</span><br><span class="line">    compact-&gt;smallest_snapshot = versions_-&gt;<span class="built_in">LastSequence</span>();</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    compact-&gt;smallest_snapshot = snapshots_.<span class="built_in">oldest</span>()-&gt;<span class="built_in">sequence_number</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  Iterator* input = versions_-&gt;<span class="built_in">MakeInputIterator</span>(compact-&gt;compaction);</span><br><span class="line">  ...</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>compact-&gt;smallest_snapshot</code> 是为了让当前的 Snapshot 的数据在 Compaction 过程中不丢失。<code>versions_-&gt;MakeInputIterator</code> 返回 Compaction 文件集合的合并迭代器：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Iterator* <span class="title">VersionSet::MakeInputIterator</span><span class="params">(Compaction* c)</span> </span>&#123;</span><br><span class="line">  ReadOptions options;</span><br><span class="line">  options.verify_checksums = options_-&gt;paranoid_checks;</span><br><span class="line">  options.fill_cache = <span class="literal">false</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Level-0 files have to be merged together.  For other levels,</span></span><br><span class="line">  <span class="comment">// we will make a concatenating iterator per level.</span></span><br><span class="line">  <span class="comment">// TODO(opt): use concatenating iterator for level-0 if there is no overlap</span></span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">int</span> space = (c-&gt;<span class="built_in">level</span>() == <span class="number">0</span> ? c-&gt;inputs_[<span class="number">0</span>].<span class="built_in">size</span>() + <span class="number">1</span> : <span class="number">2</span>);</span><br><span class="line">  Iterator** list = <span class="keyword">new</span> Iterator*[space];</span><br><span class="line">  <span class="keyword">int</span> num = <span class="number">0</span>;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> which = <span class="number">0</span>; which &lt; <span class="number">2</span>; which++) &#123;</span><br><span class="line">    <span class="keyword">if</span> (!c-&gt;inputs_[which].<span class="built_in">empty</span>()) &#123;</span><br><span class="line">      <span class="keyword">if</span> (c-&gt;<span class="built_in">level</span>() + which == <span class="number">0</span>) &#123;</span><br><span class="line">        <span class="keyword">const</span> std::vector&lt;FileMetaData*&gt;&amp; files = c-&gt;inputs_[which];</span><br><span class="line">        <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">0</span>; i &lt; files.<span class="built_in">size</span>(); i++) &#123;</span><br><span class="line">          list[num++] = table_cache_-&gt;<span class="built_in">NewIterator</span>(options, files[i]-&gt;number,</span><br><span class="line">                                                  files[i]-&gt;file_size);</span><br><span class="line">        &#125;</span><br><span class="line">      &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">// Create concatenating iterator for the files from this level</span></span><br><span class="line">        list[num++] = <span class="built_in">NewTwoLevelIterator</span>(</span><br><span class="line">            <span class="keyword">new</span> Version::<span class="built_in">LevelFileNumIterator</span>(icmp_, &amp;c-&gt;inputs_[which]),</span><br><span class="line">            &amp;GetFileIterator, table_cache_, options);</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="built_in">assert</span>(num &lt;= space);</span><br><span class="line">  Iterator* result = <span class="built_in">NewMergingIterator</span>(&amp;icmp_, list, num);</span><br><span class="line">  <span class="keyword">delete</span>[] list;</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>继续看 <code>DBImpl::DoCompactionWork</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">DBImpl::DoCompactionWork</span><span class="params">(CompactionState* compact)</span> </span>&#123;</span><br><span class="line">  ...</span><br><span class="line">  <span class="comment">// Release mutex while we&#x27;re actually doing the compaction work</span></span><br><span class="line">  mutex_.<span class="built_in">Unlock</span>();</span><br><span class="line"></span><br><span class="line">  input-&gt;<span class="built_in">SeekToFirst</span>();</span><br><span class="line">  Status status;</span><br><span class="line">  ParsedInternalKey ikey;</span><br><span class="line">  std::string current_user_key;</span><br><span class="line">  <span class="keyword">bool</span> has_current_user_key = <span class="literal">false</span>;</span><br><span class="line">  SequenceNumber last_sequence_for_key = kMaxSequenceNumber;</span><br><span class="line">  <span class="keyword">while</span> (input-&gt;<span class="built_in">Valid</span>() &amp;&amp; !shutting_down_.<span class="built_in">load</span>(std::memory_order_acquire)) &#123;</span><br><span class="line">    <span class="comment">// Prioritize immutable compaction work</span></span><br><span class="line">    <span class="keyword">if</span> (has_imm_.<span class="built_in">load</span>(std::memory_order_relaxed)) &#123;</span><br><span class="line">      <span class="keyword">const</span> <span class="keyword">uint64_t</span> imm_start = env_-&gt;<span class="built_in">NowMicros</span>();</span><br><span class="line">      mutex_.<span class="built_in">Lock</span>();</span><br><span class="line">      <span class="keyword">if</span> (imm_ != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">        <span class="built_in">CompactMemTable</span>();</span><br><span class="line">        <span class="comment">// Wake up MakeRoomForWrite() if necessary.</span></span><br><span class="line">        background_work_finished_signal_.<span class="built_in">SignalAll</span>();</span><br><span class="line">      &#125;</span><br><span class="line">      mutex_.<span class="built_in">Unlock</span>();</span><br><span class="line">      imm_micros += (env_-&gt;<span class="built_in">NowMicros</span>() - imm_start);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    Slice key = input-&gt;<span class="built_in">key</span>();</span><br><span class="line">    <span class="keyword">if</span> (compact-&gt;compaction-&gt;<span class="built_in">ShouldStopBefore</span>(key) &amp;&amp;</span><br><span class="line">        compact-&gt;builder != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">      status = <span class="built_in">FinishCompactionOutputFile</span>(compact, input);</span><br><span class="line">      <span class="keyword">if</span> (!status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// Handle key/value, add to state, etc.</span></span><br><span class="line">    <span class="keyword">bool</span> drop = <span class="literal">false</span>;</span><br><span class="line">    <span class="keyword">if</span> (!<span class="built_in">ParseInternalKey</span>(key, &amp;ikey)) &#123;</span><br><span class="line">      <span class="comment">// Do not hide error keys</span></span><br><span class="line">      current_user_key.<span class="built_in">clear</span>();</span><br><span class="line">      has_current_user_key = <span class="literal">false</span>;</span><br><span class="line">      last_sequence_for_key = kMaxSequenceNumber;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      <span class="keyword">if</span> (!has_current_user_key ||</span><br><span class="line">          <span class="built_in">user_comparator</span>()-&gt;<span class="built_in">Compare</span>(ikey.user_key, <span class="built_in">Slice</span>(current_user_key)) !=</span><br><span class="line">              <span class="number">0</span>) &#123;</span><br><span class="line">        <span class="comment">// First occurrence of this user key</span></span><br><span class="line">        current_user_key.<span class="built_in">assign</span>(ikey.user_key.<span class="built_in">data</span>(), ikey.user_key.<span class="built_in">size</span>());</span><br><span class="line">        has_current_user_key = <span class="literal">true</span>;</span><br><span class="line">        last_sequence_for_key = kMaxSequenceNumber;</span><br><span class="line">      &#125;</span><br><span class="line"></span><br><span class="line">      <span class="keyword">if</span> (last_sequence_for_key &lt;= compact-&gt;smallest_snapshot) &#123;</span><br><span class="line">        <span class="comment">// Hidden by an newer entry for same user key</span></span><br><span class="line">        drop = <span class="literal">true</span>;  <span class="comment">// (A)</span></span><br><span class="line">      &#125; <span class="keyword">else</span> <span class="keyword">if</span> (ikey.type == kTypeDeletion &amp;&amp;</span><br><span class="line">                 ikey.sequence &lt;= compact-&gt;smallest_snapshot &amp;&amp;</span><br><span class="line">                 compact-&gt;compaction-&gt;<span class="built_in">IsBaseLevelForKey</span>(ikey.user_key)) &#123;</span><br><span class="line">        <span class="comment">// For this user key:</span></span><br><span class="line">        <span class="comment">// (1) there is no data in higher levels</span></span><br><span class="line">        <span class="comment">// (2) data in lower levels will have larger sequence numbers</span></span><br><span class="line">        <span class="comment">// (3) data in layers that are being compacted here and have</span></span><br><span class="line">        <span class="comment">//     smaller sequence numbers will be dropped in the next</span></span><br><span class="line">        <span class="comment">//     few iterations of this loop (by rule (A) above).</span></span><br><span class="line">        <span class="comment">// Therefore this deletion marker is obsolete and can be dropped.</span></span><br><span class="line">        drop = <span class="literal">true</span>;</span><br><span class="line">      &#125;</span><br><span class="line"></span><br><span class="line">      last_sequence_for_key = ikey.sequence;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (!drop) &#123;</span><br><span class="line">      <span class="comment">// Open output file if necessary</span></span><br><span class="line">      <span class="keyword">if</span> (compact-&gt;builder == <span class="literal">nullptr</span>) &#123;</span><br><span class="line">        status = <span class="built_in">OpenCompactionOutputFile</span>(compact);</span><br><span class="line">        <span class="keyword">if</span> (!status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">          <span class="keyword">break</span>;</span><br><span class="line">        &#125;</span><br><span class="line">      &#125;</span><br><span class="line">      <span class="keyword">if</span> (compact-&gt;builder-&gt;<span class="built_in">NumEntries</span>() == <span class="number">0</span>) &#123;</span><br><span class="line">        compact-&gt;<span class="built_in">current_output</span>()-&gt;smallest.<span class="built_in">DecodeFrom</span>(key);</span><br><span class="line">      &#125;</span><br><span class="line">      compact-&gt;<span class="built_in">current_output</span>()-&gt;largest.<span class="built_in">DecodeFrom</span>(key);</span><br><span class="line">      compact-&gt;builder-&gt;<span class="built_in">Add</span>(key, input-&gt;<span class="built_in">value</span>());</span><br><span class="line"></span><br><span class="line">      <span class="comment">// Close output file if it is big enough</span></span><br><span class="line">      <span class="keyword">if</span> (compact-&gt;builder-&gt;<span class="built_in">FileSize</span>() &gt;=</span><br><span class="line">          compact-&gt;compaction-&gt;<span class="built_in">MaxOutputFileSize</span>()) &#123;</span><br><span class="line">        status = <span class="built_in">FinishCompactionOutputFile</span>(compact, input);</span><br><span class="line">        <span class="keyword">if</span> (!status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">          <span class="keyword">break</span>;</span><br><span class="line">        &#125;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    input-&gt;<span class="built_in">Next</span>();</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>一个巨大的循环。首先判断是否已经 <code>shutting_down_</code>，如果已经关闭了，则终止当前的 Compaction 过程；随后判断当前是否有 <code>imm_</code>，如果存在的话则也先执行 <code>CompactMemTable</code>；再来判断当前输出的文件是否可以结束了，如果是的话就执行 <code>FinishCompactionOutputFile</code> 完成当前文件。</p>
+<p>接下来是是否丢弃键值对的判定。如果某个 <code>user_key</code> 的非最新版本小于快照版本，则可以直接丢弃，因为读最新的版本就足够了；如果某个删除操作的版本小于快照版本，并且在更高层没有相同的 <code>user_key</code>，那么这个删除操作及其之前更早的插入操作可以同时丢弃了。</p>
+<p>对于没有丢弃的键值对，将其写入当前的 Table Builder。当输出的大小超过阈值，同样执行 <code>FinishCompactionOutputFile</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">DBImpl::OpenCompactionOutputFile</span><span class="params">(CompactionState* compact)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">assert</span>(compact != <span class="literal">nullptr</span>);</span><br><span class="line">  <span class="built_in">assert</span>(compact-&gt;builder == <span class="literal">nullptr</span>);</span><br><span class="line">  <span class="keyword">uint64_t</span> file_number;</span><br><span class="line">  &#123;</span><br><span class="line">    mutex_.<span class="built_in">Lock</span>();</span><br><span class="line">    file_number = versions_-&gt;<span class="built_in">NewFileNumber</span>();</span><br><span class="line">    pending_outputs_.<span class="built_in">insert</span>(file_number);</span><br><span class="line">    CompactionState::Output out;</span><br><span class="line">    out.number = file_number;</span><br><span class="line">    out.smallest.<span class="built_in">Clear</span>();</span><br><span class="line">    out.largest.<span class="built_in">Clear</span>();</span><br><span class="line">    compact-&gt;outputs.<span class="built_in">push_back</span>(out);</span><br><span class="line">    mutex_.<span class="built_in">Unlock</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Make the output file</span></span><br><span class="line">  std::string fname = <span class="built_in">TableFileName</span>(dbname_, file_number);</span><br><span class="line">  Status s = env_-&gt;<span class="built_in">NewWritableFile</span>(fname, &amp;compact-&gt;outfile);</span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    compact-&gt;builder = <span class="keyword">new</span> <span class="built_in">TableBuilder</span>(options_, compact-&gt;outfile);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">DBImpl::FinishCompactionOutputFile</span><span class="params">(CompactionState* compact,</span></span></span><br><span class="line"><span class="params"><span class="function">                                          Iterator* input)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">assert</span>(compact != <span class="literal">nullptr</span>);</span><br><span class="line">  <span class="built_in">assert</span>(compact-&gt;outfile != <span class="literal">nullptr</span>);</span><br><span class="line">  <span class="built_in">assert</span>(compact-&gt;builder != <span class="literal">nullptr</span>);</span><br><span class="line"></span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">uint64_t</span> output_number = compact-&gt;<span class="built_in">current_output</span>()-&gt;number;</span><br><span class="line">  <span class="built_in">assert</span>(output_number != <span class="number">0</span>);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Check for iterator errors</span></span><br><span class="line">  Status s = input-&gt;<span class="built_in">status</span>();</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">uint64_t</span> current_entries = compact-&gt;builder-&gt;<span class="built_in">NumEntries</span>();</span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    s = compact-&gt;builder-&gt;<span class="built_in">Finish</span>();</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    compact-&gt;builder-&gt;<span class="built_in">Abandon</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">uint64_t</span> current_bytes = compact-&gt;builder-&gt;<span class="built_in">FileSize</span>();</span><br><span class="line">  compact-&gt;<span class="built_in">current_output</span>()-&gt;file_size = current_bytes;</span><br><span class="line">  compact-&gt;total_bytes += current_bytes;</span><br><span class="line">  <span class="keyword">delete</span> compact-&gt;builder;</span><br><span class="line">  compact-&gt;builder = <span class="literal">nullptr</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Finish and check for file errors</span></span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    s = compact-&gt;outfile-&gt;<span class="built_in">Sync</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    s = compact-&gt;outfile-&gt;<span class="built_in">Close</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">delete</span> compact-&gt;outfile;</span><br><span class="line">  compact-&gt;outfile = <span class="literal">nullptr</span>;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>() &amp;&amp; current_entries &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="comment">// Verify that the table is usable</span></span><br><span class="line">    Iterator* iter =</span><br><span class="line">        table_cache_-&gt;<span class="built_in">NewIterator</span>(<span class="built_in">ReadOptions</span>(), output_number, current_bytes);</span><br><span class="line">    s = iter-&gt;<span class="built_in">status</span>();</span><br><span class="line">    <span class="keyword">delete</span> iter;</span><br><span class="line">    <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Generated table #%llu@%d: %lld keys, %lld bytes&quot;</span>,</span><br><span class="line">          (<span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span>)output_number, compact-&gt;compaction-&gt;<span class="built_in">level</span>(),</span><br><span class="line">          (<span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span>)current_entries,</span><br><span class="line">          (<span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span>)current_bytes);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>继续来看 <code>DBImpl::DoCompactionWork</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">DBImpl::InstallCompactionResults</span><span class="params">(CompactionState* compact)</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line">  <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Compacted %d@%d + %d@%d files =&gt; %lld bytes&quot;</span>,</span><br><span class="line">      compact-&gt;compaction-&gt;<span class="built_in">num_input_files</span>(<span class="number">0</span>), compact-&gt;compaction-&gt;<span class="built_in">level</span>(),</span><br><span class="line">      compact-&gt;compaction-&gt;<span class="built_in">num_input_files</span>(<span class="number">1</span>), compact-&gt;compaction-&gt;<span class="built_in">level</span>() + <span class="number">1</span>,</span><br><span class="line">      <span class="keyword">static_cast</span>&lt;<span class="keyword">long</span> <span class="keyword">long</span>&gt;(compact-&gt;total_bytes));</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Add compaction outputs</span></span><br><span class="line">  compact-&gt;compaction-&gt;<span class="built_in">AddInputDeletions</span>(compact-&gt;compaction-&gt;<span class="built_in">edit</span>());</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">int</span> level = compact-&gt;compaction-&gt;<span class="built_in">level</span>();</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">0</span>; i &lt; compact-&gt;outputs.<span class="built_in">size</span>(); i++) &#123;</span><br><span class="line">    <span class="keyword">const</span> CompactionState::Output&amp; out = compact-&gt;outputs[i];</span><br><span class="line">    compact-&gt;compaction-&gt;<span class="built_in">edit</span>()-&gt;<span class="built_in">AddFile</span>(level + <span class="number">1</span>, out.number, out.file_size,</span><br><span class="line">                                         out.smallest, out.largest);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> versions_-&gt;<span class="built_in">LogAndApply</span>(compact-&gt;compaction-&gt;<span class="built_in">edit</span>(), &amp;mutex_);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">DBImpl::DoCompactionWork</span><span class="params">(CompactionState* compact)</span> </span>&#123;</span><br><span class="line">  ...</span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>() &amp;&amp; shutting_down_.<span class="built_in">load</span>(std::memory_order_acquire)) &#123;</span><br><span class="line">    status = Status::<span class="built_in">IOError</span>(<span class="string">&quot;Deleting DB during compaction&quot;</span>);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>() &amp;&amp; compact-&gt;builder != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    status = <span class="built_in">FinishCompactionOutputFile</span>(compact, input);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    status = input-&gt;<span class="built_in">status</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">delete</span> input;</span><br><span class="line">  input = <span class="literal">nullptr</span>;</span><br><span class="line"></span><br><span class="line">  CompactionStats stats;</span><br><span class="line">  stats.micros = env_-&gt;<span class="built_in">NowMicros</span>() - start_micros - imm_micros;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> which = <span class="number">0</span>; which &lt; <span class="number">2</span>; which++) &#123;</span><br><span class="line">    <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; compact-&gt;compaction-&gt;<span class="built_in">num_input_files</span>(which); i++) &#123;</span><br><span class="line">      stats.bytes_read += compact-&gt;compaction-&gt;<span class="built_in">input</span>(which, i)-&gt;file_size;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">0</span>; i &lt; compact-&gt;outputs.<span class="built_in">size</span>(); i++) &#123;</span><br><span class="line">    stats.bytes_written += compact-&gt;outputs[i].file_size;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  mutex_.<span class="built_in">Lock</span>();</span><br><span class="line">  stats_[compact-&gt;compaction-&gt;<span class="built_in">level</span>() + <span class="number">1</span>].<span class="built_in">Add</span>(stats);</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    status = <span class="built_in">InstallCompactionResults</span>(compact);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (!status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="built_in">RecordBackgroundError</span>(status);</span><br><span class="line">  &#125;</span><br><span class="line">  VersionSet::LevelSummaryStorage tmp;</span><br><span class="line">  <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;compacted to: %s&quot;</span>, versions_-&gt;<span class="built_in">LevelSummary</span>(&amp;tmp));</span><br><span class="line">  <span class="keyword">return</span> status;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>执行 <code>InstallCompactionResults</code> 时将 Compaction 的文件集合加入到 <code>VersionEdit</code> 的删除列表中，并将新生成的文件加入到新文件列表里，随后执行 <code>versions_-&gt;LogAndApply</code> 更新版本。最后再执行一些清理操作，Compaction 过程就结束了。</p>
+ 
+      <!-- reward -->
+      
+    </div>
+    
+
+    <!-- copyright -->
+    
+    <div class="declare">
+      <ul class="post-copyright">
+        <li>
+          <i class="ri-copyright-line"></i>
+          <strong>Copyright： </strong>
+          
+          Copyright is owned by the author. For commercial reprints, please contact the author for authorization. For non-commercial reprints, please indicate the source.
+          
+        </li>
+      </ul>
+    </div>
+    
+    <footer class="article-footer">
+       
+<div class="share-btn">
+      <span class="share-sns share-outer">
+        <i class="ri-share-forward-line"></i>
+        分享
+      </span>
+      <div class="share-wrap">
+        <i class="arrow"></i>
+        <div class="share-icons">
+          
+          <a class="weibo share-sns" href="javascript:;" data-type="weibo">
+            <i class="ri-weibo-fill"></i>
+          </a>
+          <a class="weixin share-sns wxFab" href="javascript:;" data-type="weixin">
+            <i class="ri-wechat-fill"></i>
+          </a>
+          <a class="qq share-sns" href="javascript:;" data-type="qq">
+            <i class="ri-qq-fill"></i>
+          </a>
+          <a class="douban share-sns" href="javascript:;" data-type="douban">
+            <i class="ri-douban-line"></i>
+          </a>
+          <!-- <a class="qzone share-sns" href="javascript:;" data-type="qzone">
+            <i class="icon icon-qzone"></i>
+          </a> -->
+          
+          <a class="facebook share-sns" href="javascript:;" data-type="facebook">
+            <i class="ri-facebook-circle-fill"></i>
+          </a>
+          <a class="twitter share-sns" href="javascript:;" data-type="twitter">
+            <i class="ri-twitter-fill"></i>
+          </a>
+          <a class="google share-sns" href="javascript:;" data-type="google">
+            <i class="ri-google-fill"></i>
+          </a>
+        </div>
+      </div>
+</div>
+
+<div class="wx-share-modal">
+    <a class="modal-close" href="javascript:;"><i class="ri-close-circle-line"></i></a>
+    <p>扫一扫，分享到微信</p>
+    <div class="wx-qrcode">
+      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%9410.Compaction%E6%93%8D%E4%BD%9C/" alt="微信分享二维码">
+    </div>
+</div>
+
+<div id="share-mask"></div>  
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LevelDB/" rel="tag">LevelDB</a></li></ul>
+
+    </footer>
+  </div>
+
+   
+  <nav class="article-nav">
+    
+    
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%949.%E8%AF%BB%E5%86%99%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B/" class="article-nav-link">
+        <strong class="article-nav-caption">下一篇</strong>
+        <div class="article-nav-title">LevelDB源码分析——9.读写完整流程</div>
+      </a>
+    
+  </nav>
+
+   
+<!-- valine评论 -->
+<div id="vcomments-box">
+  <div id="vcomments"></div>
+</div>
+<script src="//cdn1.lncld.net/static/js/3.0.4/av-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/valine@1.4.14/dist/Valine.min.js"></script>
+<script>
+  new Valine({
+    el: "#vcomments",
+    app_id: "NSGUA2zFQlabQAWLXHM8G89r-MdYXbMMI",
+    app_key: "dxEn5Cz3tIz4zHFNpVdfQWgB",
+    path: window.location.pathname,
+    avatar: "monsterid",
+    placeholder: "给我的文章加点评论吧~",
+    recordIP: true,
+  });
+  const infoEle = document.querySelector("#vcomments .info");
+  if (infoEle && infoEle.childNodes && infoEle.childNodes.length > 0) {
+    infoEle.childNodes.forEach(function (item) {
+      item.parentNode.removeChild(item);
+    });
+  }
+</script>
+<style>
+  #vcomments-box {
+    padding: 5px 30px;
+  }
+
+  @media screen and (max-width: 800px) {
+    #vcomments-box {
+      padding: 5px 0px;
+    }
+  }
+
+  #vcomments-box #vcomments {
+    background-color: #fff;
+  }
+
+  .v .vlist .vcard .vh {
+    padding-right: 20px;
+  }
+
+  .v .vlist .vcard {
+    padding-left: 10px;
+  }
+</style>
+
+ 
+   
+     
+</article>
+
+</section>
+      <footer class="footer">
+  <div class="outer">
+    <ul>
+      <li>
+        Copyrights &copy;
+        2021-2022
+        <i class="ri-heart-fill heart_icon"></i> Xufei Pan
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        
+        Powered by <a href="https://hexo.io" target="_blank">Hexo</a>
+        <span class="division">|</span>
+        Theme - <a href="https://github.com/Shen-Yu/hexo-theme-ayer" target="_blank">Ayer</a>
+        
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        <span>
+  <span><i class="ri-user-3-fill"></i>Visitors:<span id="busuanzi_value_site_uv"></span></span>
+  <span class="division">|</span>
+  <span><i class="ri-eye-fill"></i>Views:<span id="busuanzi_value_page_pv"></span></span>
+</span>
+        
+      </li>
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      <li>
+        <!-- cnzz统计 -->
+        
+        <script type="text/javascript" src='https://v1.cnzz.com/z_stat.php?id=1280023895&amp;web_id=1280023895'></script>
+        
+      </li>
+    </ul>
+  </div>
+</footer>
+      <div class="float_btns">
+        <div class="totop" id="totop">
+  <i class="ri-arrow-up-line"></i>
+</div>
+
+<div class="todark" id="todark">
+  <i class="ri-moon-line"></i>
+</div>
+
+      </div>
+    </main>
+    <aside class="sidebar on">
+      <button class="navbar-toggle"></button>
+<nav class="navbar">
+  
+  <div class="logo">
+    <a href="/"><img src="/images/ayer-side.svg" alt="Gasol"></a>
+  </div>
+  
+  <ul class="nav nav-main">
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/">主页</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/archives">目录</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/categories">分类</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags">标签</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags/photos/">图片</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/friends">友链</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/2021/about">关于我</a>
+    </li>
+    
+  </ul>
+</nav>
+<nav class="navbar navbar-bottom">
+  <ul class="nav">
+    <li class="nav-item">
+      
+      <a class="nav-item-link nav-item-search"  title="Search">
+        <i class="ri-search-line"></i>
+      </a>
+      
+      
+      <a class="nav-item-link" target="_blank" href="/atom.xml" title="RSS Feed">
+        <i class="ri-rss-line"></i>
+      </a>
+      
+    </li>
+  </ul>
+</nav>
+<div class="search-form-wrap">
+  <div class="local-search local-search-plugin">
+  <input type="search" id="local-search-input" class="local-search-input" placeholder="Search...">
+  <div id="local-search-result" class="local-search-result"></div>
+</div>
+</div>
+    </aside>
+    <div id="mask"></div>
+
+<!-- #reward -->
+<div id="reward">
+  <span class="close"><i class="ri-close-line"></i></span>
+  <p class="reward-p"><i class="ri-cup-line"></i>请我喝杯奶茶吧~</p>
+  <div class="reward-box">
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/alipay.jpg">
+      <span class="reward-type">支付宝</span>
+    </div>
+    
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/wechat.jpg">
+      <span class="reward-type">微信</span>
+    </div>
+    
+  </div>
+</div>
+    
+<script src="/js/jquery-2.0.3.min.js"></script>
+ 
+<script src="/js/lazyload.min.js"></script>
+
+<!-- Tocbot -->
+ 
+<script src="/js/tocbot.min.js"></script>
+
+<script>
+  tocbot.init({
+    tocSelector: ".tocbot",
+    contentSelector: ".article-entry",
+    headingSelector: "h1, h2, h3, h4, h5, h6",
+    hasInnerContainers: true,
+    scrollSmooth: true,
+    scrollContainer: "main",
+    positionFixedSelector: ".tocbot",
+    positionFixedClass: "is-position-fixed",
+    fixedSidebarOffset: "auto",
+  });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.js"></script>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.css"
+/>
+<script src="https://cdn.jsdelivr.net/npm/justifiedGallery@3.7.0/dist/js/jquery.justifiedGallery.min.js"></script>
+
+<script src="/dist/main.js"></script>
+
+<!-- ImageViewer -->
+ <!-- Root element of PhotoSwipe. Must have class pswp. -->
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    <!-- Background of PhotoSwipe. 
+         It's a separate element as animating opacity is faster than rgba(). -->
+    <div class="pswp__bg"></div>
+
+    <!-- Slides wrapper with overflow:hidden. -->
+    <div class="pswp__scroll-wrap">
+
+        <!-- Container that holds slides. 
+            PhotoSwipe keeps only 3 of them in the DOM to save memory.
+            Don't modify these 3 pswp__item elements, data is added later on. -->
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        <!-- Default (PhotoSwipeUI_Default) interface on top of sliding area. Can be changed. -->
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                <!--  Controls are self-explanatory. Order can be changed. -->
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" style="display:none" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                <!-- Preloader demo http://codepen.io/dimsemenov/pen/yyBWoR -->
+                <!-- element will get class pswp__preloader--active when preloader is running -->
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css">
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"></script>
+
+<script>
+    function viewer_init() {
+        let pswpElement = document.querySelectorAll('.pswp')[0];
+        let $imgArr = document.querySelectorAll(('.article-entry img:not(.reward-img)'))
+
+        $imgArr.forEach(($em, i) => {
+            $em.onclick = () => {
+                // slider展开状态
+                // todo: 这样不好，后面改成状态
+                if (document.querySelector('.left-col.show')) return
+                let items = []
+                $imgArr.forEach(($em2, i2) => {
+                    let img = $em2.getAttribute('data-idx', i2)
+                    let src = $em2.getAttribute('data-target') || $em2.getAttribute('src')
+                    let title = $em2.getAttribute('alt')
+                    // 获得原图尺寸
+                    const image = new Image()
+                    image.src = src
+                    items.push({
+                        src: src,
+                        w: image.width || $em2.width,
+                        h: image.height || $em2.height,
+                        title: title
+                    })
+                })
+                var gallery = new PhotoSwipe(pswpElement, PhotoSwipeUI_Default, items, {
+                    index: parseInt(i)
+                });
+                gallery.init()
+            }
+        })
+    }
+    viewer_init()
+</script> 
+<!-- MathJax -->
+
+<!-- Katex -->
+
+<!-- busuanzi  -->
+ 
+<script src="/js/busuanzi-2.3.pure.min.js"></script>
+ 
+<!-- ClickLove -->
+ 
+<script src="/js/clickLove.js"></script>
+ 
+<!-- ClickBoom1 -->
+
+<!-- ClickBoom2 -->
+
+<!-- CodeCopy -->
+ 
+<link rel="stylesheet" href="/css/clipboard.css">
+ <script src="https://cdn.jsdelivr.net/npm/clipboard@2/dist/clipboard.min.js"></script>
+<script>
+  function wait(callback, seconds) {
+    var timelag = null;
+    timelag = window.setTimeout(callback, seconds);
+  }
+  !function (e, t, a) {
+    var initCopyCode = function(){
+      var copyHtml = '';
+      copyHtml += '<button class="btn-copy" data-clipboard-snippet="">';
+      copyHtml += '<i class="ri-file-copy-2-line"></i><span>COPY</span>';
+      copyHtml += '</button>';
+      $(".highlight .code pre").before(copyHtml);
+      $(".article pre code").before(copyHtml);
+      var clipboard = new ClipboardJS('.btn-copy', {
+        target: function(trigger) {
+          return trigger.nextElementSibling;
+        }
+      });
+      clipboard.on('success', function(e) {
+        let $btn = $(e.trigger);
+        $btn.addClass('copied');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-checkbox-circle-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPIED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-checkbox-circle-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+      clipboard.on('error', function(e) {
+        e.clearSelection();
+        let $btn = $(e.trigger);
+        $btn.addClass('copy-failed');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-time-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPY FAILED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-time-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+    }
+    initCopyCode();
+  }(window, document);
+</script>
+ 
+<!-- CanvasBackground -->
+ 
+<script src="/js/dz.js"></script>
+ 
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ theme: "forest" });
+  }
+</script>
+
+
+    
+  </div>
+</body>
+
+</html>

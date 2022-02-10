@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+
+
+<html lang="en">
+  
+
+    <head>
+      <meta charset="utf-8" />
+        
+      <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1"
+      />
+      <title>LevelDB源码分析——4.内存数据库 |  Gasol</title>
+  <meta name="generator" content="hexo-theme-ayer">
+      
+      <link rel="shortcut icon" href="/favicon.ico" />
+       
+<link rel="stylesheet" href="/dist/main.css">
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/Shen-Yu/cdn/css/remixicon.min.css"
+      />
+      
+<link rel="stylesheet" href="/css/custom.css">
+ 
+      <script src="https://cdn.jsdelivr.net/npm/pace-js@1.0.2/pace.min.js"></script>
+       
+ 
+
+      <!-- mermaid -->
+      
+    <link rel="alternate" href="/atom.xml" title="Gasol" type="application/atom+xml">
+</head>
+  </html>
+</html>
+
+
+<body>
+  <div id="app">
+    
+      
+    <main class="content on">
+      <section class="outer">
+  <article
+  id="post-LevelDB源码分析——4.内存数据库"
+  class="article article-type-post"
+  itemscope
+  itemprop="blogPost"
+  data-scroll-reveal
+>
+  <div class="article-inner">
+    
+    <header class="article-header">
+       
+<h1 class="article-title sea-center" style="border-left:0" itemprop="name">
+  LevelDB源码分析——4.内存数据库
+</h1>
+ 
+
+      
+    </header>
+     
+    <div class="article-meta">
+      <a href="/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%944.%E5%86%85%E5%AD%98%E6%95%B0%E6%8D%AE%E5%BA%93/" class="article-date">
+  <time datetime="2022-02-09T13:30:30.000Z" itemprop="datePublished">2022-02-09</time>
+</a> 
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/LevelDB/">LevelDB</a>
+  </div>
+  
+<div class="word_count">
+    <span class="post-time">
+        <span class="post-meta-item-icon">
+            <i class="ri-quill-pen-line"></i>
+            <span class="post-meta-item-text"> Word count:</span>
+            <span class="post-count">2.6k</span>
+        </span>
+    </span>
+
+    <span class="post-time">
+        &nbsp; | &nbsp;
+        <span class="post-meta-item-icon">
+            <i class="ri-book-open-line"></i>
+            <span class="post-meta-item-text"> Reading time≈</span>
+            <span class="post-count">13 min</span>
+        </span>
+    </span>
+</div>
+ 
+    </div>
+      
+    <div class="tocbot"></div>
+
+
+
+
+  
+    <div class="article-entry" itemprop="articleBody">
+       
+  <h2 id="四-内存数据库"><a href="#四-内存数据库" class="headerlink" title="四.内存数据库"></a>四.内存数据库</h2><p>本系列的上一篇介绍了 LevelDB 写操作中构造的 <code>WriteBatch</code>，以及写操作的第一步：追加日志。本篇将继续介绍写操作的第二步：插入内存数据库。</p>
+<span id="more"></span>
+
+<h3 id="3-内存数据库-MemTable"><a href="#3-内存数据库-MemTable" class="headerlink" title="3. 内存数据库 MemTable"></a>3. 内存数据库 MemTable</h3><p>MemTable 即为在内存中建立的 KV 数据库，基于跳表，定义于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/memtable.h"><code>db/memtable.h</code></a>：</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;string&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/dbformat.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/skiplist.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/db.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;util/arena.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">InternalKeyComparator</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">MemTableIterator</span>;</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">MemTable</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// MemTables are reference counted.  The initial reference count</span></span><br><span class="line">  <span class="comment">// is zero and the caller must call Ref() at least once.</span></span><br><span class="line">  <span class="function"><span class="keyword">explicit</span> <span class="title">MemTable</span><span class="params">(<span class="keyword">const</span> InternalKeyComparator&amp; comparator)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">MemTable</span>(<span class="keyword">const</span> MemTable&amp;) = <span class="keyword">delete</span>;</span><br><span class="line">  MemTable&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> MemTable&amp;) = <span class="keyword">delete</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Increase reference count.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Ref</span><span class="params">()</span> </span>&#123; ++refs_; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Drop reference count.  Delete if no more references exist.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Unref</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    --refs_;</span><br><span class="line">    <span class="built_in">assert</span>(refs_ &gt;= <span class="number">0</span>);</span><br><span class="line">    <span class="keyword">if</span> (refs_ &lt;= <span class="number">0</span>) &#123;</span><br><span class="line">      <span class="keyword">delete</span> <span class="keyword">this</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Returns an estimate of the number of bytes of data in use by this</span></span><br><span class="line">  <span class="comment">// data structure. It is safe to call when MemTable is being modified.</span></span><br><span class="line">  <span class="function"><span class="keyword">size_t</span> <span class="title">ApproximateMemoryUsage</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return an iterator that yields the contents of the memtable.</span></span><br><span class="line">  <span class="comment">//</span></span><br><span class="line">  <span class="comment">// The caller must ensure that the underlying MemTable remains live</span></span><br><span class="line">  <span class="comment">// while the returned iterator is live.  The keys returned by this</span></span><br><span class="line">  <span class="comment">// iterator are internal keys encoded by AppendInternalKey in the</span></span><br><span class="line">  <span class="comment">// db/format.&#123;h,cc&#125; module.</span></span><br><span class="line">  <span class="function">Iterator* <span class="title">NewIterator</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Add an entry into memtable that maps key to value at the</span></span><br><span class="line">  <span class="comment">// specified sequence number and with the specified type.</span></span><br><span class="line">  <span class="comment">// Typically value will be empty if type==kTypeDeletion.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Add</span><span class="params">(SequenceNumber seq, ValueType type, <span class="keyword">const</span> Slice&amp; key,</span></span></span><br><span class="line"><span class="params"><span class="function">           <span class="keyword">const</span> Slice&amp; value)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// If memtable contains a value for key, store it in *value and return true.</span></span><br><span class="line">  <span class="comment">// If memtable contains a deletion for key, store a NotFound() error</span></span><br><span class="line">  <span class="comment">// in *status and return true.</span></span><br><span class="line">  <span class="comment">// Else, return false.</span></span><br><span class="line">  <span class="function"><span class="keyword">bool</span> <span class="title">Get</span><span class="params">(<span class="keyword">const</span> LookupKey&amp; key, std::string* value, Status* s)</span></span>;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="keyword">friend</span> <span class="class"><span class="keyword">class</span> <span class="title">MemTableIterator</span>;</span></span><br><span class="line">  <span class="keyword">friend</span> <span class="class"><span class="keyword">class</span> <span class="title">MemTableBackwardIterator</span>;</span></span><br><span class="line"></span><br><span class="line">  <span class="class"><span class="keyword">struct</span> <span class="title">KeyComparator</span> &#123;</span></span><br><span class="line">    <span class="keyword">const</span> InternalKeyComparator comparator;</span><br><span class="line">    <span class="function"><span class="keyword">explicit</span> <span class="title">KeyComparator</span><span class="params">(<span class="keyword">const</span> InternalKeyComparator&amp; c)</span> : comparator(c) &#123;</span>&#125;</span><br><span class="line">    <span class="function"><span class="keyword">int</span> <span class="title">operator</span><span class="params">()</span><span class="params">(<span class="keyword">const</span> <span class="keyword">char</span>* a, <span class="keyword">const</span> <span class="keyword">char</span>* b)</span> <span class="keyword">const</span></span>;</span><br><span class="line">  &#125;;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">typedef</span> SkipList&lt;<span class="keyword">const</span> <span class="keyword">char</span>*, KeyComparator&gt; Table;</span><br><span class="line"></span><br><span class="line">  ~<span class="built_in">MemTable</span>();  <span class="comment">// Private since only Unref() should be used to delete it</span></span><br><span class="line"></span><br><span class="line">  KeyComparator comparator_;</span><br><span class="line">  <span class="keyword">int</span> refs_;</span><br><span class="line">  Arena arena_;</span><br><span class="line">  Table table_;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p>MemTable 包含比较器 <code>comparator_</code> 、引用计数 <code>refs_</code>、内存池 <code>arena_</code> 和跳表 <code>table_</code> 四个成员变量。代码中首先前置声明了 <code>InternalKeyComparator</code> 类，该类的对象是 MemTable 的构造函数参数。该类定义为 <code>db/dbformat.h</code> 中，将在下文中介绍。随后 MemTable 禁止了拷贝构造和赋值操作符，不允许拷贝操作，这应该是内存池的副作用。MemTable 使用引用计数管理自己的生命周期，甚至其析构函数都是私有的。而接口 <code>ApproximateMemoryUsage</code> 实际上返回的是内存池中的内存使用量。接口方面提供了读写接口和迭代器接口。内部定义了结构体 <code>KeyComparator</code>，对 <code>InternalKeyComparator</code> 进行了封装。为了弄清楚 <code>InternalKeyComparator</code> 到底是什么，我们先转到 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/dbformat.h"><code>db/dbformat.h</code></a> 查看其定义：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">enum</span> <span class="title">ValueType</span> &#123;</span> kTypeDeletion = <span class="number">0x0</span>, kTypeValue = <span class="number">0x1</span> &#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> ValueType kValueTypeForSeek = kTypeValue;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="keyword">uint64_t</span> SequenceNumber;</span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> SequenceNumber kMaxSequenceNumber = ((<span class="number">0x1</span>ull &lt;&lt; <span class="number">56</span>) - <span class="number">1</span>);</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">ParsedInternalKey</span> &#123;</span></span><br><span class="line">  Slice user_key;</span><br><span class="line">  SequenceNumber sequence;</span><br><span class="line">  ValueType type;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">ParsedInternalKey</span>() &#123;&#125;  <span class="comment">// Intentionally left uninitialized (for speed)</span></span><br><span class="line">  <span class="built_in">ParsedInternalKey</span>(<span class="keyword">const</span> Slice&amp; u, <span class="keyword">const</span> SequenceNumber&amp; seq, ValueType t)</span><br><span class="line">      : <span class="built_in">user_key</span>(u), <span class="built_in">sequence</span>(seq), <span class="built_in">type</span>(t) &#123;&#125;</span><br><span class="line">  <span class="function">std::string <span class="title">DebugString</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Return the length of the encoding of &quot;key&quot;.</span></span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="keyword">size_t</span> <span class="title">InternalKeyEncodingLength</span><span class="params">(<span class="keyword">const</span> ParsedInternalKey&amp; key)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">return</span> key.user_key.<span class="built_in">size</span>() + <span class="number">8</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">uint64_t</span> <span class="title">PackSequenceAndType</span><span class="params">(<span class="keyword">uint64_t</span> seq, ValueType t)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">assert</span>(seq &lt;= kMaxSequenceNumber);</span><br><span class="line">  <span class="built_in">assert</span>(t &lt;= kValueTypeForSeek);</span><br><span class="line">  <span class="keyword">return</span> (seq &lt;&lt; <span class="number">8</span>) | t;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">AppendInternalKey</span><span class="params">(std::string* result, <span class="keyword">const</span> ParsedInternalKey&amp; key)</span> </span>&#123;</span><br><span class="line">  result-&gt;<span class="built_in">append</span>(key.user_key.<span class="built_in">data</span>(), key.user_key.<span class="built_in">size</span>());</span><br><span class="line">  <span class="built_in">PutFixed64</span>(result, <span class="built_in">PackSequenceAndType</span>(key.sequence, key.type));</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="keyword">bool</span> <span class="title">ParseInternalKey</span><span class="params">(<span class="keyword">const</span> Slice&amp; internal_key,</span></span></span><br><span class="line"><span class="params"><span class="function">                             ParsedInternalKey* result)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">size_t</span> n = internal_key.<span class="built_in">size</span>();</span><br><span class="line">  <span class="keyword">if</span> (n &lt; <span class="number">8</span>) <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">  <span class="keyword">uint64_t</span> num = <span class="built_in">DecodeFixed64</span>(internal_key.<span class="built_in">data</span>() + n - <span class="number">8</span>);</span><br><span class="line">  <span class="keyword">uint8_t</span> c = num &amp; <span class="number">0xff</span>;</span><br><span class="line">  result-&gt;sequence = num &gt;&gt; <span class="number">8</span>;</span><br><span class="line">  result-&gt;type = <span class="keyword">static_cast</span>&lt;ValueType&gt;(c);</span><br><span class="line">  result-&gt;user_key = <span class="built_in">Slice</span>(internal_key.<span class="built_in">data</span>(), n - <span class="number">8</span>);</span><br><span class="line">  <span class="keyword">return</span> (c &lt;= <span class="keyword">static_cast</span>&lt;<span class="keyword">uint8_t</span>&gt;(kTypeValue));</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">inline</span> Slice <span class="title">ExtractUserKey</span><span class="params">(<span class="keyword">const</span> Slice&amp; internal_key)</span> </span>&#123;</span><br><span class="line">  <span class="built_in">assert</span>(internal_key.<span class="built_in">size</span>() &gt;= <span class="number">8</span>);</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">Slice</span>(internal_key.<span class="built_in">data</span>(), internal_key.<span class="built_in">size</span>() - <span class="number">8</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>为了方便阅读这里对函数进行了重排。</p>
+<p>首先定义了两种值类型 <code>kTypeDeletion</code> 和 <code>kTypeValue</code>，注意 <code>kTypeDeletion</code> 值较小。然后定义了 <code>SequenceNumber</code> 为 64 位无符号数，并且定义了其最大值。然后是 <code>ParsedInternalKey</code> 结构体的定义，其内部包括 <code>user_key</code>、<code>sequence</code> 和 <code>type</code>。根据类的名字就可以猜到一点了，Internal Key 应该是对 User Key 的封装，在其基础上加入了序列号 <code>sequence</code> 和值类型 <code>type</code>。函数 <code>PackSequenceAndType</code> 中可以发现， <code>sequence</code> 占用 56bit，剩下 8bit 给 <code>type</code>，一共组成 64 位无符号数，下文称之为合成序列号。所以 <code>InternalKeyEncodingLength</code> 计算的长度是 User Key 的长度加 8。</p>
+<p>函数 <code>AppendInternalKey</code> 可以将 <code>ParsedInternalKey</code> 转为字符串，先将 User Key 编码进去，再将 64 位合成序列号加入，对应的解析函数 <code>ParseInternalKey</code> 为逆过程。</p>
+<p>继续：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">InternalKeyComparator</span> :</span> <span class="keyword">public</span> Comparator &#123;</span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="keyword">const</span> Comparator* user_comparator_;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="function"><span class="keyword">explicit</span> <span class="title">InternalKeyComparator</span><span class="params">(<span class="keyword">const</span> Comparator* c)</span> : user_comparator_(c) &#123;</span>&#125;</span><br><span class="line">  <span class="function"><span class="keyword">const</span> <span class="keyword">char</span>* <span class="title">Name</span><span class="params">()</span> <span class="keyword">const</span> <span class="keyword">override</span></span>;</span><br><span class="line">  <span class="function"><span class="keyword">int</span> <span class="title">Compare</span><span class="params">(<span class="keyword">const</span> Slice&amp; a, <span class="keyword">const</span> Slice&amp; b)</span> <span class="keyword">const</span> <span class="keyword">override</span></span>;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">FindShortestSeparator</span><span class="params">(std::string* start,</span></span></span><br><span class="line"><span class="params"><span class="function">                             <span class="keyword">const</span> Slice&amp; limit)</span> <span class="keyword">const</span> <span class="keyword">override</span></span>;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">FindShortSuccessor</span><span class="params">(std::string* key)</span> <span class="keyword">const</span> <span class="keyword">override</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">const</span> Comparator* <span class="title">user_comparator</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> user_comparator_; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">int</span> <span class="title">Compare</span><span class="params">(<span class="keyword">const</span> InternalKey&amp; a, <span class="keyword">const</span> InternalKey&amp; b)</span> <span class="keyword">const</span></span>;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">const</span> <span class="keyword">char</span>* <span class="title">InternalKeyComparator::Name</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123;</span><br><span class="line">  <span class="keyword">return</span> <span class="string">&quot;leveldb.InternalKeyComparator&quot;</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">InternalKeyComparator::Compare</span><span class="params">(<span class="keyword">const</span> Slice&amp; akey, <span class="keyword">const</span> Slice&amp; bkey)</span> <span class="keyword">const</span> </span>&#123;</span><br><span class="line">  <span class="comment">// Order by:</span></span><br><span class="line">  <span class="comment">//    increasing user key (according to user-supplied comparator)</span></span><br><span class="line">  <span class="comment">//    decreasing sequence number</span></span><br><span class="line">  <span class="comment">//    decreasing type (though sequence# should be enough to disambiguate)</span></span><br><span class="line">  <span class="keyword">int</span> r = user_comparator_-&gt;<span class="built_in">Compare</span>(<span class="built_in">ExtractUserKey</span>(akey), <span class="built_in">ExtractUserKey</span>(bkey));</span><br><span class="line">  <span class="keyword">if</span> (r == <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">uint64_t</span> anum = <span class="built_in">DecodeFixed64</span>(akey.<span class="built_in">data</span>() + akey.<span class="built_in">size</span>() - <span class="number">8</span>);</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">uint64_t</span> bnum = <span class="built_in">DecodeFixed64</span>(bkey.<span class="built_in">data</span>() + bkey.<span class="built_in">size</span>() - <span class="number">8</span>);</span><br><span class="line">    <span class="keyword">if</span> (anum &gt; bnum) &#123;</span><br><span class="line">      r = <span class="number">-1</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (anum &lt; bnum) &#123;</span><br><span class="line">      r = +<span class="number">1</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> r;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>InternalKeyComparator</code> 继承于 LevelDB 中定义的比较器 <code>Comparator</code>，其源码位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/include/leveldb/comparator.h"><code>include/leveldb/comparator.h</code> </a>，有兴趣自己阅读。其核心函数即为 <code>Compare</code>，比较两个 <code>Key</code> 的大小。<code>InternalKeyComparator</code> 对 <code>user_comparator_</code> 进行了封装，当比较 <code>InternalKey</code> 时，首先使用 <code>user_comparator_</code> 对 User Key 进行比较，如果相等，则抽取合成序列号进行比较，序列号大的反而在顺序上更小，即降序排列。继续看 <code>InternalKey</code> 的定义：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">InternalKey</span> &#123;</span></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  std::string rep_;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="built_in">InternalKey</span>() &#123;&#125;  <span class="comment">// Leave rep_ as empty to indicate it is invalid</span></span><br><span class="line">  <span class="built_in">InternalKey</span>(<span class="keyword">const</span> Slice&amp; user_key, SequenceNumber s, ValueType t) &#123;</span><br><span class="line">    <span class="built_in">AppendInternalKey</span>(&amp;rep_, <span class="built_in">ParsedInternalKey</span>(user_key, s, t));</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">bool</span> <span class="title">DecodeFrom</span><span class="params">(<span class="keyword">const</span> Slice&amp; s)</span> </span>&#123;</span><br><span class="line">    rep_.<span class="built_in">assign</span>(s.<span class="built_in">data</span>(), s.<span class="built_in">size</span>());</span><br><span class="line">    <span class="keyword">return</span> !rep_.<span class="built_in">empty</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function">Slice <span class="title">Encode</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123;</span><br><span class="line">    <span class="built_in">assert</span>(!rep_.<span class="built_in">empty</span>());</span><br><span class="line">    <span class="keyword">return</span> rep_;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function">Slice <span class="title">user_key</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">ExtractUserKey</span>(rep_); &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">SetFrom</span><span class="params">(<span class="keyword">const</span> ParsedInternalKey&amp; p)</span> </span>&#123;</span><br><span class="line">    rep_.<span class="built_in">clear</span>();</span><br><span class="line">    <span class="built_in">AppendInternalKey</span>(&amp;rep_, p);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Clear</span><span class="params">()</span> </span>&#123; rep_.<span class="built_in">clear</span>(); &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function">std::string <span class="title">DebugString</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="keyword">int</span> <span class="title">InternalKeyComparator::Compare</span><span class="params">(<span class="keyword">const</span> InternalKey&amp; a,</span></span></span><br><span class="line"><span class="params"><span class="function">                                          <span class="keyword">const</span> InternalKey&amp; b)</span> <span class="keyword">const</span> </span>&#123;</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">Compare</span>(a.<span class="built_in">Encode</span>(), b.<span class="built_in">Encode</span>());</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>InternalKey</code> 存储的信息和 <code>ParseInternalKey</code> 一致，只是存储形式不同，前者直接使用字符串 <code>rep_</code> 存储 User Key 和合成序列号，对应的比较函数则直接使用 <code>InternalKeyComparator</code> 对 <code>rep_</code> 进行解析后的比较。该文件中还有 <code>InternalFilterPolicy</code> 的定义，同样是从 Internal Key 解析出 User Key 进行操作。继续看 <code>LookupKey</code>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// A helper class useful for DBImpl::Get()</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">LookupKey</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// Initialize *this for looking up user_key at a snapshot with</span></span><br><span class="line">  <span class="comment">// the specified sequence number.</span></span><br><span class="line">  <span class="built_in">LookupKey</span>(<span class="keyword">const</span> Slice&amp; user_key, SequenceNumber sequence);</span><br><span class="line"></span><br><span class="line">  <span class="built_in">LookupKey</span>(<span class="keyword">const</span> LookupKey&amp;) = <span class="keyword">delete</span>;</span><br><span class="line">  LookupKey&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> LookupKey&amp;) = <span class="keyword">delete</span>;</span><br><span class="line"></span><br><span class="line">  ~<span class="built_in">LookupKey</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return a key suitable for lookup in a MemTable.</span></span><br><span class="line">  <span class="function">Slice <span class="title">memtable_key</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">Slice</span>(start_, end_ - start_); &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return an internal key (suitable for passing to an internal iterator)</span></span><br><span class="line">  <span class="function">Slice <span class="title">internal_key</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">Slice</span>(kstart_, end_ - kstart_); &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return the user key</span></span><br><span class="line">  <span class="function">Slice <span class="title">user_key</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">Slice</span>(kstart_, end_ - kstart_ - <span class="number">8</span>); &#125;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="comment">// We construct a char array of the form:</span></span><br><span class="line">  <span class="comment">//    klength  varint32               &lt;-- start_</span></span><br><span class="line">  <span class="comment">//    userkey  char[klength]          &lt;-- kstart_</span></span><br><span class="line">  <span class="comment">//    tag      uint64</span></span><br><span class="line">  <span class="comment">//                                    &lt;-- end_</span></span><br><span class="line">  <span class="comment">// The array is a suitable MemTable key.</span></span><br><span class="line">  <span class="comment">// The suffix starting with &quot;userkey&quot; can be used as an InternalKey.</span></span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">char</span>* start_;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">char</span>* kstart_;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">char</span>* end_;</span><br><span class="line">  <span class="keyword">char</span> space_[<span class="number">200</span>];  <span class="comment">// Avoid allocation for short keys</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">LookupKey::<span class="built_in">LookupKey</span>(<span class="keyword">const</span> Slice&amp; user_key, SequenceNumber s) &#123;</span><br><span class="line">  <span class="keyword">size_t</span> usize = user_key.<span class="built_in">size</span>();</span><br><span class="line">  <span class="keyword">size_t</span> needed = usize + <span class="number">13</span>;  <span class="comment">// A conservative estimate</span></span><br><span class="line">  <span class="keyword">char</span>* dst;</span><br><span class="line">  <span class="keyword">if</span> (needed &lt;= <span class="built_in"><span class="keyword">sizeof</span></span>(space_)) &#123;</span><br><span class="line">    dst = space_;</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    dst = <span class="keyword">new</span> <span class="keyword">char</span>[needed];</span><br><span class="line">  &#125;</span><br><span class="line">  start_ = dst;</span><br><span class="line">  dst = <span class="built_in">EncodeVarint32</span>(dst, usize + <span class="number">8</span>);</span><br><span class="line">  kstart_ = dst;</span><br><span class="line">  <span class="built_in">memcpy</span>(dst, user_key.<span class="built_in">data</span>(), usize);</span><br><span class="line">  dst += usize;</span><br><span class="line">  <span class="built_in">EncodeFixed64</span>(dst, <span class="built_in">PackSequenceAndType</span>(s, kValueTypeForSeek));</span><br><span class="line">  dst += <span class="number">8</span>;</span><br><span class="line">  end_ = dst;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>回到内存数据库的定义中，<code>KeyComparator</code> 对 <code>InternalKeyComparator</code> 又进行了一次封装，来看下其具体函数定义：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> Slice <span class="title">GetLengthPrefixedSlice</span><span class="params">(<span class="keyword">const</span> <span class="keyword">char</span>* data)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">uint32_t</span> len;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">char</span>* p = data;</span><br><span class="line">  p = <span class="built_in">GetVarint32Ptr</span>(p, p + <span class="number">5</span>, &amp;len);  <span class="comment">// +5: we assume &quot;p&quot; is not corrupted</span></span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">Slice</span>(p, len);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">int</span> MemTable::KeyComparator::<span class="built_in"><span class="keyword">operator</span></span>()(<span class="keyword">const</span> <span class="keyword">char</span>* aptr,</span><br><span class="line">                                        <span class="keyword">const</span> <span class="keyword">char</span>* bptr) <span class="keyword">const</span> &#123;</span><br><span class="line">  <span class="comment">// Internal keys are encoded as length-prefixed strings.</span></span><br><span class="line">  Slice a = <span class="built_in">GetLengthPrefixedSlice</span>(aptr);</span><br><span class="line">  Slice b = <span class="built_in">GetLengthPrefixedSlice</span>(bptr);</span><br><span class="line">  <span class="keyword">return</span> comparator.<span class="built_in">Compare</span>(a, b);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里的 <code>comparator</code> 自然是 <code>InternalKeyComparator</code>，从 <code>GetLengthPrefixedSlice</code> 推测该函数的参数为 MemTable Key。继续看 <code>MemTable::Add</code> 和 <code>MemTable::Get</code> 的实现：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">MemTable::Add</span><span class="params">(SequenceNumber s, ValueType type, <span class="keyword">const</span> Slice&amp; key,</span></span></span><br><span class="line"><span class="params"><span class="function">                   <span class="keyword">const</span> Slice&amp; value)</span> </span>&#123;</span><br><span class="line">  <span class="comment">// Format of an entry is concatenation of:</span></span><br><span class="line">  <span class="comment">//  key_size     : varint32 of internal_key.size()</span></span><br><span class="line">  <span class="comment">//  key bytes    : char[internal_key.size()]</span></span><br><span class="line">  <span class="comment">//  value_size   : varint32 of value.size()</span></span><br><span class="line">  <span class="comment">//  value bytes  : char[value.size()]</span></span><br><span class="line">  <span class="keyword">size_t</span> key_size = key.<span class="built_in">size</span>();</span><br><span class="line">  <span class="keyword">size_t</span> val_size = value.<span class="built_in">size</span>();</span><br><span class="line">  <span class="keyword">size_t</span> internal_key_size = key_size + <span class="number">8</span>;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">size_t</span> encoded_len = <span class="built_in">VarintLength</span>(internal_key_size) +</span><br><span class="line">                             internal_key_size + <span class="built_in">VarintLength</span>(val_size) +</span><br><span class="line">                             val_size;</span><br><span class="line">  <span class="keyword">char</span>* buf = arena_.<span class="built_in">Allocate</span>(encoded_len);</span><br><span class="line">  <span class="keyword">char</span>* p = <span class="built_in">EncodeVarint32</span>(buf, internal_key_size);</span><br><span class="line">  <span class="built_in">memcpy</span>(p, key.<span class="built_in">data</span>(), key_size);</span><br><span class="line">  p += key_size;</span><br><span class="line">  <span class="built_in">EncodeFixed64</span>(p, (s &lt;&lt; <span class="number">8</span>) | type);</span><br><span class="line">  p += <span class="number">8</span>;</span><br><span class="line">  p = <span class="built_in">EncodeVarint32</span>(p, val_size);</span><br><span class="line">  <span class="built_in">memcpy</span>(p, value.<span class="built_in">data</span>(), val_size);</span><br><span class="line">  <span class="built_in">assert</span>(p + val_size == buf + encoded_len);</span><br><span class="line">  table_.<span class="built_in">Insert</span>(buf);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">bool</span> <span class="title">MemTable::Get</span><span class="params">(<span class="keyword">const</span> LookupKey&amp; key, std::string* value, Status* s)</span> </span>&#123;</span><br><span class="line">  Slice memkey = key.<span class="built_in">memtable_key</span>();</span><br><span class="line">  <span class="function">Table::Iterator <span class="title">iter</span><span class="params">(&amp;table_)</span></span>;</span><br><span class="line">  iter.<span class="built_in">Seek</span>(memkey.<span class="built_in">data</span>());</span><br><span class="line">  <span class="keyword">if</span> (iter.<span class="built_in">Valid</span>()) &#123;</span><br><span class="line">    <span class="comment">// entry format is:</span></span><br><span class="line">    <span class="comment">//    klength  varint32</span></span><br><span class="line">    <span class="comment">//    userkey  char[klength]</span></span><br><span class="line">    <span class="comment">//    tag      uint64</span></span><br><span class="line">    <span class="comment">//    vlength  varint32</span></span><br><span class="line">    <span class="comment">//    value    char[vlength]</span></span><br><span class="line">    <span class="comment">// Check that it belongs to same user key.  We do not check the</span></span><br><span class="line">    <span class="comment">// sequence number since the Seek() call above should have skipped</span></span><br><span class="line">    <span class="comment">// all entries with overly large sequence numbers.</span></span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span>* entry = iter.<span class="built_in">key</span>();</span><br><span class="line">    <span class="keyword">uint32_t</span> key_length;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span>* key_ptr = <span class="built_in">GetVarint32Ptr</span>(entry, entry + <span class="number">5</span>, &amp;key_length);</span><br><span class="line">    <span class="keyword">if</span> (comparator_.comparator.<span class="built_in">user_comparator</span>()-&gt;<span class="built_in">Compare</span>(</span><br><span class="line">            <span class="built_in">Slice</span>(key_ptr, key_length - <span class="number">8</span>), key.<span class="built_in">user_key</span>()) == <span class="number">0</span>) &#123;</span><br><span class="line">      <span class="comment">// Correct user key</span></span><br><span class="line">      <span class="keyword">const</span> <span class="keyword">uint64_t</span> tag = <span class="built_in">DecodeFixed64</span>(key_ptr + key_length - <span class="number">8</span>);</span><br><span class="line">      <span class="built_in"><span class="keyword">switch</span></span> (<span class="keyword">static_cast</span>&lt;ValueType&gt;(tag &amp; <span class="number">0xff</span>)) &#123;</span><br><span class="line">        <span class="keyword">case</span> kTypeValue: &#123;</span><br><span class="line">          Slice v = <span class="built_in">GetLengthPrefixedSlice</span>(key_ptr + key_length);</span><br><span class="line">          value-&gt;<span class="built_in">assign</span>(v.<span class="built_in">data</span>(), v.<span class="built_in">size</span>());</span><br><span class="line">          <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">case</span> kTypeDeletion:</span><br><span class="line">          *s = Status::<span class="built_in">NotFound</span>(<span class="built_in">Slice</span>());</span><br><span class="line">          <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>MemTable::Add</code> 的注释中写明了条目的格式，除了图中 <code>Key</code> 部分的存储外，条目还包括 <code>Value</code> 的存储，打包好后插入跳表中。<code>MemTable::Get</code> 中则根据 MemTable Key 查找对应的条目，查到后使用 <code>user_comparator</code> 进一步比较两者的 User Key 是否一致，如果完全一致并且值类型不是删除，就把条目中的 <code>Value</code> 读出来放到结果中。最后看下迭代器的实现：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">char</span>* <span class="title">EncodeKey</span><span class="params">(std::string* scratch, <span class="keyword">const</span> Slice&amp; target)</span> </span>&#123;</span><br><span class="line">  scratch-&gt;<span class="built_in">clear</span>();</span><br><span class="line">  <span class="built_in">PutVarint32</span>(scratch, target.<span class="built_in">size</span>());</span><br><span class="line">  scratch-&gt;<span class="built_in">append</span>(target.<span class="built_in">data</span>(), target.<span class="built_in">size</span>());</span><br><span class="line">  <span class="keyword">return</span> scratch-&gt;<span class="built_in">data</span>();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">MemTableIterator</span> :</span> <span class="keyword">public</span> Iterator &#123;</span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="function"><span class="keyword">explicit</span> <span class="title">MemTableIterator</span><span class="params">(MemTable::Table* table)</span> : iter_(table) &#123;</span>&#125;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">MemTableIterator</span>(<span class="keyword">const</span> MemTableIterator&amp;) = <span class="keyword">delete</span>;</span><br><span class="line">  MemTableIterator&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> MemTableIterator&amp;) = <span class="keyword">delete</span>;</span><br><span class="line"></span><br><span class="line">  ~<span class="built_in">MemTableIterator</span>() <span class="keyword">override</span> = <span class="keyword">default</span>;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">bool</span> <span class="title">Valid</span><span class="params">()</span> <span class="keyword">const</span> <span class="keyword">override</span> </span>&#123; <span class="keyword">return</span> iter_.<span class="built_in">Valid</span>(); &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Seek</span><span class="params">(<span class="keyword">const</span> Slice&amp; k)</span> <span class="keyword">override</span> </span>&#123; iter_.<span class="built_in">Seek</span>(<span class="built_in">EncodeKey</span>(&amp;tmp_, k)); &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">SeekToFirst</span><span class="params">()</span> <span class="keyword">override</span> </span>&#123; iter_.<span class="built_in">SeekToFirst</span>(); &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">SeekToLast</span><span class="params">()</span> <span class="keyword">override</span> </span>&#123; iter_.<span class="built_in">SeekToLast</span>(); &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Next</span><span class="params">()</span> <span class="keyword">override</span> </span>&#123; iter_.<span class="built_in">Next</span>(); &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Prev</span><span class="params">()</span> <span class="keyword">override</span> </span>&#123; iter_.<span class="built_in">Prev</span>(); &#125;</span><br><span class="line">  <span class="function">Slice <span class="title">key</span><span class="params">()</span> <span class="keyword">const</span> <span class="keyword">override</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">GetLengthPrefixedSlice</span>(iter_.<span class="built_in">key</span>()); &#125;</span><br><span class="line">  <span class="function">Slice <span class="title">value</span><span class="params">()</span> <span class="keyword">const</span> <span class="keyword">override</span> </span>&#123;</span><br><span class="line">    Slice key_slice = <span class="built_in">GetLengthPrefixedSlice</span>(iter_.<span class="built_in">key</span>());</span><br><span class="line">    <span class="keyword">return</span> <span class="built_in">GetLengthPrefixedSlice</span>(key_slice.<span class="built_in">data</span>() + key_slice.<span class="built_in">size</span>());</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function">Status <span class="title">status</span><span class="params">()</span> <span class="keyword">const</span> <span class="keyword">override</span> </span>&#123; <span class="keyword">return</span> Status::<span class="built_in">OK</span>(); &#125;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  MemTable::Table::Iterator iter_;</span><br><span class="line">  std::string tmp_;  <span class="comment">// For passing to EncodeKey</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="function">Iterator* <span class="title">MemTable::NewIterator</span><span class="params">()</span> </span>&#123; <span class="keyword">return</span> <span class="keyword">new</span> <span class="built_in">MemTableIterator</span>(&amp;table_); &#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>MemTableIterator</code> 对跳表的迭代器进行了一层封装，跳表的条目中编码了 <code>Key</code> 和 <code>Value</code>，<code>MemTableIterator</code> 中对其进行了对应的解析。至此，内存数据库的代码就分析完了。</p>
+<h3 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h3><p>上一篇和本篇分析了 LevelDB 写操作的具体过程，分析了 <code>WriteBatch</code>、<code>Log</code> 和 <code>MemTable</code> 的代码，理解了高性能写操作的原理。不过内存数据库的大小毕竟是有限的，总会需要把内存中的数据持久化到硬盘中，并且还需要提供高速的硬盘数据查询操作，这些又是怎样实现的呢？且听下回分解！</p>
+ 
+      <!-- reward -->
+      
+    </div>
+    
+
+    <!-- copyright -->
+    
+    <div class="declare">
+      <ul class="post-copyright">
+        <li>
+          <i class="ri-copyright-line"></i>
+          <strong>Copyright： </strong>
+          
+          Copyright is owned by the author. For commercial reprints, please contact the author for authorization. For non-commercial reprints, please indicate the source.
+          
+        </li>
+      </ul>
+    </div>
+    
+    <footer class="article-footer">
+       
+<div class="share-btn">
+      <span class="share-sns share-outer">
+        <i class="ri-share-forward-line"></i>
+        分享
+      </span>
+      <div class="share-wrap">
+        <i class="arrow"></i>
+        <div class="share-icons">
+          
+          <a class="weibo share-sns" href="javascript:;" data-type="weibo">
+            <i class="ri-weibo-fill"></i>
+          </a>
+          <a class="weixin share-sns wxFab" href="javascript:;" data-type="weixin">
+            <i class="ri-wechat-fill"></i>
+          </a>
+          <a class="qq share-sns" href="javascript:;" data-type="qq">
+            <i class="ri-qq-fill"></i>
+          </a>
+          <a class="douban share-sns" href="javascript:;" data-type="douban">
+            <i class="ri-douban-line"></i>
+          </a>
+          <!-- <a class="qzone share-sns" href="javascript:;" data-type="qzone">
+            <i class="icon icon-qzone"></i>
+          </a> -->
+          
+          <a class="facebook share-sns" href="javascript:;" data-type="facebook">
+            <i class="ri-facebook-circle-fill"></i>
+          </a>
+          <a class="twitter share-sns" href="javascript:;" data-type="twitter">
+            <i class="ri-twitter-fill"></i>
+          </a>
+          <a class="google share-sns" href="javascript:;" data-type="google">
+            <i class="ri-google-fill"></i>
+          </a>
+        </div>
+      </div>
+</div>
+
+<div class="wx-share-modal">
+    <a class="modal-close" href="javascript:;"><i class="ri-close-circle-line"></i></a>
+    <p>扫一扫，分享到微信</p>
+    <div class="wx-qrcode">
+      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%944.%E5%86%85%E5%AD%98%E6%95%B0%E6%8D%AE%E5%BA%93/" alt="微信分享二维码">
+    </div>
+</div>
+
+<div id="share-mask"></div>  
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LevelDB/" rel="tag">LevelDB</a></li></ul>
+
+    </footer>
+  </div>
+
+   
+  <nav class="article-nav">
+    
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%945.%E4%B8%8D%E5%90%8C%E7%9A%84%E4%B8%BB%E9%94%AEKey%E7%B1%BB%E5%9E%8B/" class="article-nav-link">
+        <strong class="article-nav-caption">上一篇</strong>
+        <div class="article-nav-title">
+          
+            LevelDB源码分析——5.不同的主键Key类型
+          
+        </div>
+      </a>
+    
+    
+      <a href="/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%943.%E6%97%A5%E5%BF%97/" class="article-nav-link">
+        <strong class="article-nav-caption">下一篇</strong>
+        <div class="article-nav-title">LevelDB源码分析——3.日志</div>
+      </a>
+    
+  </nav>
+
+   
+<!-- valine评论 -->
+<div id="vcomments-box">
+  <div id="vcomments"></div>
+</div>
+<script src="//cdn1.lncld.net/static/js/3.0.4/av-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/valine@1.4.14/dist/Valine.min.js"></script>
+<script>
+  new Valine({
+    el: "#vcomments",
+    app_id: "NSGUA2zFQlabQAWLXHM8G89r-MdYXbMMI",
+    app_key: "dxEn5Cz3tIz4zHFNpVdfQWgB",
+    path: window.location.pathname,
+    avatar: "monsterid",
+    placeholder: "给我的文章加点评论吧~",
+    recordIP: true,
+  });
+  const infoEle = document.querySelector("#vcomments .info");
+  if (infoEle && infoEle.childNodes && infoEle.childNodes.length > 0) {
+    infoEle.childNodes.forEach(function (item) {
+      item.parentNode.removeChild(item);
+    });
+  }
+</script>
+<style>
+  #vcomments-box {
+    padding: 5px 30px;
+  }
+
+  @media screen and (max-width: 800px) {
+    #vcomments-box {
+      padding: 5px 0px;
+    }
+  }
+
+  #vcomments-box #vcomments {
+    background-color: #fff;
+  }
+
+  .v .vlist .vcard .vh {
+    padding-right: 20px;
+  }
+
+  .v .vlist .vcard {
+    padding-left: 10px;
+  }
+</style>
+
+ 
+   
+     
+</article>
+
+</section>
+      <footer class="footer">
+  <div class="outer">
+    <ul>
+      <li>
+        Copyrights &copy;
+        2021-2022
+        <i class="ri-heart-fill heart_icon"></i> Xufei Pan
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        
+        Powered by <a href="https://hexo.io" target="_blank">Hexo</a>
+        <span class="division">|</span>
+        Theme - <a href="https://github.com/Shen-Yu/hexo-theme-ayer" target="_blank">Ayer</a>
+        
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        <span>
+  <span><i class="ri-user-3-fill"></i>Visitors:<span id="busuanzi_value_site_uv"></span></span>
+  <span class="division">|</span>
+  <span><i class="ri-eye-fill"></i>Views:<span id="busuanzi_value_page_pv"></span></span>
+</span>
+        
+      </li>
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      <li>
+        <!-- cnzz统计 -->
+        
+        <script type="text/javascript" src='https://v1.cnzz.com/z_stat.php?id=1280023895&amp;web_id=1280023895'></script>
+        
+      </li>
+    </ul>
+  </div>
+</footer>
+      <div class="float_btns">
+        <div class="totop" id="totop">
+  <i class="ri-arrow-up-line"></i>
+</div>
+
+<div class="todark" id="todark">
+  <i class="ri-moon-line"></i>
+</div>
+
+      </div>
+    </main>
+    <aside class="sidebar on">
+      <button class="navbar-toggle"></button>
+<nav class="navbar">
+  
+  <div class="logo">
+    <a href="/"><img src="/images/ayer-side.svg" alt="Gasol"></a>
+  </div>
+  
+  <ul class="nav nav-main">
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/">主页</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/archives">目录</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/categories">分类</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags">标签</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags/photos/">图片</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/friends">友链</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/2021/about">关于我</a>
+    </li>
+    
+  </ul>
+</nav>
+<nav class="navbar navbar-bottom">
+  <ul class="nav">
+    <li class="nav-item">
+      
+      <a class="nav-item-link nav-item-search"  title="Search">
+        <i class="ri-search-line"></i>
+      </a>
+      
+      
+      <a class="nav-item-link" target="_blank" href="/atom.xml" title="RSS Feed">
+        <i class="ri-rss-line"></i>
+      </a>
+      
+    </li>
+  </ul>
+</nav>
+<div class="search-form-wrap">
+  <div class="local-search local-search-plugin">
+  <input type="search" id="local-search-input" class="local-search-input" placeholder="Search...">
+  <div id="local-search-result" class="local-search-result"></div>
+</div>
+</div>
+    </aside>
+    <div id="mask"></div>
+
+<!-- #reward -->
+<div id="reward">
+  <span class="close"><i class="ri-close-line"></i></span>
+  <p class="reward-p"><i class="ri-cup-line"></i>请我喝杯奶茶吧~</p>
+  <div class="reward-box">
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/alipay.jpg">
+      <span class="reward-type">支付宝</span>
+    </div>
+    
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/wechat.jpg">
+      <span class="reward-type">微信</span>
+    </div>
+    
+  </div>
+</div>
+    
+<script src="/js/jquery-2.0.3.min.js"></script>
+ 
+<script src="/js/lazyload.min.js"></script>
+
+<!-- Tocbot -->
+ 
+<script src="/js/tocbot.min.js"></script>
+
+<script>
+  tocbot.init({
+    tocSelector: ".tocbot",
+    contentSelector: ".article-entry",
+    headingSelector: "h1, h2, h3, h4, h5, h6",
+    hasInnerContainers: true,
+    scrollSmooth: true,
+    scrollContainer: "main",
+    positionFixedSelector: ".tocbot",
+    positionFixedClass: "is-position-fixed",
+    fixedSidebarOffset: "auto",
+  });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.js"></script>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.css"
+/>
+<script src="https://cdn.jsdelivr.net/npm/justifiedGallery@3.7.0/dist/js/jquery.justifiedGallery.min.js"></script>
+
+<script src="/dist/main.js"></script>
+
+<!-- ImageViewer -->
+ <!-- Root element of PhotoSwipe. Must have class pswp. -->
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    <!-- Background of PhotoSwipe. 
+         It's a separate element as animating opacity is faster than rgba(). -->
+    <div class="pswp__bg"></div>
+
+    <!-- Slides wrapper with overflow:hidden. -->
+    <div class="pswp__scroll-wrap">
+
+        <!-- Container that holds slides. 
+            PhotoSwipe keeps only 3 of them in the DOM to save memory.
+            Don't modify these 3 pswp__item elements, data is added later on. -->
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        <!-- Default (PhotoSwipeUI_Default) interface on top of sliding area. Can be changed. -->
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                <!--  Controls are self-explanatory. Order can be changed. -->
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" style="display:none" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                <!-- Preloader demo http://codepen.io/dimsemenov/pen/yyBWoR -->
+                <!-- element will get class pswp__preloader--active when preloader is running -->
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css">
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"></script>
+
+<script>
+    function viewer_init() {
+        let pswpElement = document.querySelectorAll('.pswp')[0];
+        let $imgArr = document.querySelectorAll(('.article-entry img:not(.reward-img)'))
+
+        $imgArr.forEach(($em, i) => {
+            $em.onclick = () => {
+                // slider展开状态
+                // todo: 这样不好，后面改成状态
+                if (document.querySelector('.left-col.show')) return
+                let items = []
+                $imgArr.forEach(($em2, i2) => {
+                    let img = $em2.getAttribute('data-idx', i2)
+                    let src = $em2.getAttribute('data-target') || $em2.getAttribute('src')
+                    let title = $em2.getAttribute('alt')
+                    // 获得原图尺寸
+                    const image = new Image()
+                    image.src = src
+                    items.push({
+                        src: src,
+                        w: image.width || $em2.width,
+                        h: image.height || $em2.height,
+                        title: title
+                    })
+                })
+                var gallery = new PhotoSwipe(pswpElement, PhotoSwipeUI_Default, items, {
+                    index: parseInt(i)
+                });
+                gallery.init()
+            }
+        })
+    }
+    viewer_init()
+</script> 
+<!-- MathJax -->
+
+<!-- Katex -->
+
+<!-- busuanzi  -->
+ 
+<script src="/js/busuanzi-2.3.pure.min.js"></script>
+ 
+<!-- ClickLove -->
+ 
+<script src="/js/clickLove.js"></script>
+ 
+<!-- ClickBoom1 -->
+
+<!-- ClickBoom2 -->
+
+<!-- CodeCopy -->
+ 
+<link rel="stylesheet" href="/css/clipboard.css">
+ <script src="https://cdn.jsdelivr.net/npm/clipboard@2/dist/clipboard.min.js"></script>
+<script>
+  function wait(callback, seconds) {
+    var timelag = null;
+    timelag = window.setTimeout(callback, seconds);
+  }
+  !function (e, t, a) {
+    var initCopyCode = function(){
+      var copyHtml = '';
+      copyHtml += '<button class="btn-copy" data-clipboard-snippet="">';
+      copyHtml += '<i class="ri-file-copy-2-line"></i><span>COPY</span>';
+      copyHtml += '</button>';
+      $(".highlight .code pre").before(copyHtml);
+      $(".article pre code").before(copyHtml);
+      var clipboard = new ClipboardJS('.btn-copy', {
+        target: function(trigger) {
+          return trigger.nextElementSibling;
+        }
+      });
+      clipboard.on('success', function(e) {
+        let $btn = $(e.trigger);
+        $btn.addClass('copied');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-checkbox-circle-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPIED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-checkbox-circle-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+      clipboard.on('error', function(e) {
+        e.clearSelection();
+        let $btn = $(e.trigger);
+        $btn.addClass('copy-failed');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-time-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPY FAILED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-time-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+    }
+    initCopyCode();
+  }(window, document);
+</script>
+ 
+<!-- CanvasBackground -->
+ 
+<script src="/js/dz.js"></script>
+ 
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ theme: "forest" });
+  }
+</script>
+
+
+    
+  </div>
+</body>
+
+</html>

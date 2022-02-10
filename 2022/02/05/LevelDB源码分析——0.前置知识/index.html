@@ -11,7 +11,7 @@
         name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1"
       />
-      <title>Virtual OCSSD 环境搭建 |  Gasol</title>
+      <title>LevelDB源码分析——0.前置知识 |  Gasol</title>
   <meta name="generator" content="hexo-theme-ayer">
       
       <link rel="shortcut icon" href="/favicon.ico" />
@@ -44,7 +44,7 @@
     <main class="content on">
       <section class="outer">
   <article
-  id="post-Virtual-OCSSD-环境搭建"
+  id="post-LevelDB源码分析——0.前置知识"
   class="article article-type-post"
   itemscope
   itemprop="blogPost"
@@ -55,7 +55,7 @@
     <header class="article-header">
        
 <h1 class="article-title sea-center" style="border-left:0" itemprop="name">
-  Virtual OCSSD 环境搭建
+  LevelDB源码分析——0.前置知识
 </h1>
  
 
@@ -63,11 +63,11 @@
     </header>
      
     <div class="article-meta">
-      <a href="/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/" class="article-date">
-  <time datetime="2021-06-17T15:54:01.000Z" itemprop="datePublished">2021-06-17</time>
+      <a href="/2022/02/05/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%940.%E5%89%8D%E7%BD%AE%E7%9F%A5%E8%AF%86/" class="article-date">
+  <time datetime="2022-02-05T04:00:41.000Z" itemprop="datePublished">2022-02-05</time>
 </a> 
   <div class="article-category">
-    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/QEMU/">QEMU</a>
+    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/LevelDB/">LevelDB</a>
   </div>
   
 <div class="word_count">
@@ -75,7 +75,7 @@
         <span class="post-meta-item-icon">
             <i class="ri-quill-pen-line"></i>
             <span class="post-meta-item-text"> Word count:</span>
-            <span class="post-count">767</span>
+            <span class="post-count">2.6k</span>
         </span>
     </span>
 
@@ -84,7 +84,7 @@
         <span class="post-meta-item-icon">
             <i class="ri-book-open-line"></i>
             <span class="post-meta-item-text"> Reading time≈</span>
-            <span class="post-count">3 min</span>
+            <span class="post-count">9 min</span>
         </span>
     </span>
 </div>
@@ -99,56 +99,53 @@
   
     <div class="article-entry" itemprop="articleBody">
        
-  <h2 id="一、Virtual-OpenChannel-SSD-环境配置"><a href="#一、Virtual-OpenChannel-SSD-环境配置" class="headerlink" title="一、Virtual OpenChannel SSD 环境配置"></a>一、Virtual OpenChannel SSD 环境配置</h2><p>1.下载Qemu-nvme的源码</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">git <span class="built_in">clone</span> https://github.com/OpenChannelSSD/qemu-nvme</span><br></pre></td></tr></table></figure>
-
-<p>2.进入qemu-nvme目录下，运行配置脚本，make编译</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">cd</span> qemu-nvme</span><br><span class="line">./configure --target-list=x86_64-softmmu --prefix=<span class="variable">$HOME</span>/qemu-nvme</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+  <h2 id="零．前置知识"><a href="#零．前置知识" class="headerlink" title="零．前置知识"></a>零．前置知识</h2><p>本节为LevelDB源码分析的第0章，主要介绍LevelDB相关的前置知识。包括：<code>LSM Tree</code>、<code>Bloom Filter</code>。</p>
 <span id="more"></span>
-<p>3.在完成上述步骤后，开始正式配置环境。首先，在物理机上创建一个ocssd格式的文件，例如ocssd.img。</p>
-<blockquote>
-<p>（若提示ocssd参数无效等报错，可能是因为实际使用的是物理机内置的qemu-img，而不是qemu-nvme make编译后生成的qemu-img。将下列命令的qemu-img更改为qemu-nvme/qemu-img代替即可。）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">qemu-img create -f ocssd -o num_grp=2,num_pu=4,num_chk=60 ocssd.img</span><br></pre></td></tr></table></figure>
 
-<p>4.创建一个文件，作为模拟的磁盘，用来安装linux系统。</p>
-<blockquote>
-<p>（在物理机上运行qemu虚拟机，虚拟机内加载模拟磁盘的文件与模拟ocssd的文件。最终的实验环境是在qemu虚拟机内部的linux子系统上运行。）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo qemu-img create -f raw /home/gasol/qemu-nvme/ubuntu40.raw 40G</span><br></pre></td></tr></table></figure>
-
-<p>5.下载ubuntu镜像，并在第4步建立的模拟磁盘的文件中，安装ubuntu系统。</p>
-<blockquote>
-<p>（此时可能会提示qemu-system-x86_64: warning: host doesn’t support requested feature: CPUID.80000001H:ECX.svm [bit 2]。这是正常的，忽略即可。正常情况下，在输出提示信息后，会弹出新的安装窗口，点击安装即可）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo qemu-system-x86_64 -cdrom /home/polarsparc/ubuntu-18.04.1-desktop-amd64.iso -drive format=raw,file=/home/polarsparc/Downloads/VMs/vm-disk-1.raw -enable-kvm -m 2G -name vm-ubuntu-1</span><br></pre></td></tr></table></figure>
-
-<p>6.在物理机系统上，挂载ocssd,并启动虚拟机。</p>
-<blockquote>
-<p>(注意：使用路径qemu-nvme/bin/下的qemu-system-x86_64运行，而不是采用系统内置的qemu-system-x86_64 )</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo ./bin/qemu-system-x86_64 -m 8G -enable-kvm ubuntu40.raw -blockdev ocssd,node-name=nvme01,file.driver=file,file.filename=ocssd.img -device nvme,drive=nvme01,serial=deadbeef,id=lnvm -cpu host</span><br></pre></td></tr></table></figure>
-
-<p>7.在第6步虚拟机启动的情况下，利用VNC viewer连接，弹出窗口显示虚拟机运行情况。</p>
-<blockquote>
-<p>（若提示无vncviewer，安装对应包即可）（命令中连接的IP和端口与第6步的提示IP和端口相同）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">vncviewer 127.0.0.1:5900</span><br></pre></td></tr></table></figure>
-
-<p>8.在虚拟机启动后，可以通过运行以下命令，查看是否成功挂载ocssd设备。</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo nvme lnvm list</span><br></pre></td></tr></table></figure>
-
-<h2 id="二、SPDK安装配置"><a href="#二、SPDK安装配置" class="headerlink" title="二、SPDK安装配置"></a>二、SPDK安装配置</h2><p>0.参考文档：<a target="_blank" rel="noopener" href="https://spdk.io/doc/getting_started.html">https://spdk.io/doc/getting_started.html</a></p>
-<p>1.按参考文档Getting started部分运行，即可编译安装SPDK，并可以通过运行<code>build/examples/identify</code>脚本列出系统上有效的NVME设备。</p>
-<blockquote>
-<p>（通过该脚本可以验证SPDK是否成功识别挂载的虚拟OCSSD）</p>
-</blockquote>
-<h2 id="三、关于可能遇到的git-clone与git-submodule速度过慢问题的解决方案"><a href="#三、关于可能遇到的git-clone与git-submodule速度过慢问题的解决方案" class="headerlink" title="三、关于可能遇到的git clone与git submodule速度过慢问题的解决方案"></a>三、关于可能遇到的git clone与git submodule速度过慢问题的解决方案</h2><p>0.参考文档：<a target="_blank" rel="noopener" href="https://www.cnblogs.com/zhuchengchao/p/12076153.html">https://www.cnblogs.com/zhuchengchao/p/12076153.html</a></p>
-<p>1.按照文档中的介绍，通过国内的gitee.com网站进行git clone，可以大幅度提升git clone的速率。</p>
-<p>2.对于git submodule速度过慢的问题:</p>
-<blockquote>
-<p>例如在git clone spdk的代码后，若需要git submodule，只需打开spdk/.gitmodules，将其中需要下载的库通过gitee.com下载到本地，并修改.gitmodules内部的路径即可。</p>
-</blockquote>
+<h3 id="1-LSM-Tree"><a href="#1-LSM-Tree" class="headerlink" title="1. LSM Tree"></a>1. LSM Tree</h3><p>LSM-Tree(Log-Structured Merged-tree) 现如今已经被广泛应用在了各个NoSQL 存储系统中，如BigTable, Dynamo, HBase, Cassandra, LevelDB, RocksDB 和 AsterixDB。</p>
+<p>相比于传统的in-place updates(就地更新) 索引结构，LSM-tree 第一次写入都缓存到内存中，并通过后台的flush来顺序追加到磁盘中，也就是out-of-place updates。 LSM-tree这样的实现方式有非常多的优点，包括<strong>写性能的提升、较高的空间利用率、简单的并发控制和异常恢复</strong>等。这些优点使LSM树可以服务于多种场景，如Facebook开发的基于LSM-Tree的存储引擎 RocksDB， 被广泛应用在实时数据处理/图数据处理/流式数据处理以及 OLTP(on line transaction processing) 等多种workload。</p>
+<h4 id="1-1-LSM-Tree的历史"><a href="#1-1-LSM-Tree的历史" class="headerlink" title="1.1 LSM Tree的历史"></a>1.1 LSM Tree的历史</h4><p>通常，索引结构可以选择两种策略来处理更新，即就地更新和非就地更新。 就地更新结构（例如B +树）直接覆盖旧记录以存储新更新。 例如，在图1a中，为了将与键k1相关的值从v1更新到v4，直接修改索引条目（k1，v1）以应用此更新。 </p>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=YWNjNDQ2OWIwZTMyNTQ2YmRhMDRjOWU5MzhlZDBiYWRfY2R1TTBaeXI4MXZvd3dpUFE0aEVSTEt5QWw3NVlzVnpfVG9rZW46Ym94Y25tRWJrcUVmV0FQcXNqd0k5TXZlMXhlXzE2NDQ0OTIyMTU6MTY0NDQ5NTgxNV9WNA" alt="img"></p>
+<p>由于仅存储每个记录的最新版本，因此通常对这些结构可以进行读取优化。 但是，这种设计会牺牲写入性能，因为更新会导致随机I / O。 而且，索引页通过更新和删除操作会产生分段，从而降低了空间利用率。</p>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=NzU0M2VmNjI1NTlhNjcwMWNkNTY3OWY3YzY2ODMwM2JfR3JVdTdqN0E5OW10SEdrU1RxdVlubXVpZ0xuSnlpMEhfVG9rZW46Ym94Y25lQXFqMlpoQ29uSlpqRjdYblR6MjZnXzE2NDQ0OTIyMTU6MTY0NDQ5NTgxNV9WNA" alt="img"></p>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=NGI0ZmZjZDczNmM0NGU3NTA5YWFkYzJiZmFhNDM5ODFfTjNER3ZvT0VTMEdrNUd5TXl2OGlQNFdlSk1IQVdBenNfVG9rZW46Ym94Y25tR3lzM05tRzVCTzBKUm14OUZpMWxlXzE2NDQ0OTIyMTU6MTY0NDQ5NTgxNV9WNA" alt="img"></p>
+<p>相反，out-of-update结构（例如LSM树）始终将更新变化存储到新位置，而不是覆盖旧条目。 例如，在图1b中，更新（k1，v4）被存储到一个新位置，而不是直接更新旧条目（k1，v1）。 该设计可以利用顺序I / O来处理写操作，因此可以提高写性能。 通过不覆盖旧数据，它也可以简化恢复过程。 但是，该设计的主要问题是，由于记录可能存储在多个位置中的任何一个位置，因此牺牲了读取性能。 此外，这些结构通常需要单独的数据重组过程以不断提高存储和查询效率。</p>
+<p>顺序进行out-of-places更新的想法并不新鲜； </p>
+<ul>
+<li>自1970年代以来，它已成功地应用于数据库系统。 差异文件于1976年提出，是out-of-places更新结构的早期示例。 在这种设计中，所有更新都首先应用于差异文件，该文件定期与主文件合并。 </li>
+<li>在1980年代，Postgres项目开创了日志结构数据库存储的想法。 Postgres将所有写入追加到顺序日志中，从而实现快速恢复和基于时间戳的查询。 它使用称为vacuum cleaner的后台进程连续从日志中收集并去除过时的记录——垃圾收集。 文件系统社区采用了类似的想法来充分利用磁盘写带宽，例如在日志结构文件系统（LFS）中。</li>
+</ul>
+<p>在LSM树之前，用于日志结构化存储的方法存在几个关键问题。 </p>
+<ul>
+<li>首先，将数据存储到仅追加日志中会导致查询性能下降，因为相关记录分散在整个日志中。</li>
+<li>另一个问题是由于尚未删除的过时记录而导致空间利用率低。 即使设计了各种数据重组过程，也没有统一标准的成本模型来分析写入/读取成本和空间利用率之间的折衷，这使得早期日志结构化存储难以优化。 </li>
+<li>数据重组很容易成为性能瓶颈。</li>
+</ul>
+<p> 1996年提出的LSM树通过设计一种集成到结构本身中的合并操作来解决上述问题，提供较高的写入吞吐、基于范围的高效查找 、友好的空间利用率。</p>
+<ul>
+<li>原始的LSM树设计包含一系列组件C0，C1，…，Ck，如图2所示。每个组件都被构造为B+树。 C0驻留在内存中并处理传入的写操作，而所有其余组件C1，Ck都驻留在磁盘上。 Ci满时，将触发滚动合并过程，以将一系列范围从Ci的叶子页面合并为Ci + 1</li>
+<li>如今，这种设计被引用到多层合并策略中。但是，正如我们稍后将要看到的那样，由于其实现复杂性，现今基于LSM的存储系统并未使用最初提出的滚动合并过程。关于LSM树的原始论文进一步表明，在稳定的workload下，层级数量保持不变，当所有相邻组件之间的大小比率Ti = ｜Ci+1｜/｜Ci｜相同时，写性能能得到优化。该原则影响了LSM树的所有后续实现和改进。</li>
+</ul>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=YjNhZmEyOTZkNjlkZjc0M2RiMjUxMWI0ZGZjNTBhMTVfVmMyMnBKUmFuRVdUMU5aNGE3WnAxZUMwQVlBUE5UZU9fVG9rZW46Ym94Y25qUUE5R1Q5c2c2NkZtNkYxa0VqVnJjXzE2NDQ0OTIyMTU6MTY0NDQ5NTgxNV9WNA" alt="img"></p>
+<p>与LSM树并行，Jagadish等人。 提出了一种stepped-merge逐步合并策略的结构，可以实现更好的写入性能。 它将组件组织到各个级别中，并且当级别L充满T组件时，这些T组件将合并在一起成为级别L + 1的新组件。 该策略成为当今LSM树实施中使用的分层合并策略。</p>
+<h4 id="1-2-今天的LSM-Tree"><a href="#1-2-今天的LSM-Tree" class="headerlink" title="1.2 今天的LSM Tree"></a>1.2 今天的LSM Tree</h4><p>今天的LSM-tree架构仍然以out-of-place updates 为主 通过顺序I/O来提升写性能。所有的写入，都会追加到内存中的组件，不论是更新还是插入还是删除，都会以一个新的记录添加到内存中。</p>
+<p>在内部，可以使用任何索引结构来实现LSM树组件。 当今的LSM树实现通常使用并发数据结构（如skip-list或B +树）来组织其内存组件，而它们使用B +树或排序字符串表（SSTables）来组织其磁盘组件。 SSTable包含一个数据块列表和一个索引块； 数据块存储按键排序的键值对，而索引块存储所有数据块的键范围。</p>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=NDlhZTc1MzgwMzFlNTBjNTY5MDdiNzVmYzg4Mjc2OTJfWXB3YnU2bGZpYnhsamJZT2pmQkc4eWtaalhjMXJHWFZfVG9rZW46Ym94Y25MSzJBU1JwT0RpdGdwSmNVM1RLQ2pJXzE2NDQ0OTIzODU6MTY0NDQ5NTk4NV9WNA" alt="img"></p>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=MTAwNjliYWMzYzU1YWMyMjhkMDlkM2Y2ZTNmZDk3NTFfdGtZVkp1WEx1S0RCeEhRQWxob3JZR3VnMVg0dE5FdnZfVG9rZW46Ym94Y25iVE9wMW1tRTVSRENMSUw5RnBXcDFkXzE2NDQ0OTIzODU6MTY0NDQ5NTk4NV9WNA" alt="img"></p>
+<p>在LSM树上的查询必须搜索多个组件，即查找每个key的最新版本。 点查询查询可获取特定键的值，可以简单地一个接一个地搜索所有组件，从最新到最旧，并在找到第一个匹配项后立即停止。 范围查询可以同时搜索所有组件，将搜索结果输入优先级队列以此获取最新数据。</p>
+<p>磁盘组件随着时间的推移而逐渐变多，由于必须查询更多组件，因此LSM树的查询性能趋于下降。为了解决这个问题，磁盘组件逐渐合并以减少总数。</p>
+<p>在实践中通常使用两种类型的合并策略。如图3所示，两个策略都将磁盘组件组织为层，并由大小比T控制。每个组件在图中均标有其相关的key范围。</p>
+<p>在层合并策略（图3a）中，每个级别仅维护一个组件，但是级别L的组件比级别L-1的组件大T倍。因此，级别L的组件将与级别L-1的传入组件多次合并，直到其被填满，然后将其合并为级别L + 1。</p>
+<p>例如，在图中，级别0的组件与级别1的组件合并，这将导致级别1的组件更大。相反，分层合并策略（图3b）在每个级别可能维护T个组件。当级别L已满时，这些组件将合并在一起成为级别L + 1的新组件。在图中，级别0的两个组件将合并在一起形成级别1的新组件。值得注意的是如果级别L已经是配置的最大级别时，则结果组件将保持在级别L。实际上，对于稳定的workload（插入量等于删除量），级别总数保持不变。通常，由于LSM树中要搜索的组件较少，因此层合并策略针对查询性能进行了优化。分层合并策略由于降低了合并频率而对写入进行了更多的优化。</p>
+<p><img src="https://hardcore.feishu.cn/space/api/box/stream/download/asynccode/?code=MTViNDM5MDM3Zjk3YjkxODRiOGFhZDI4YzRhNzNiMzVfd05KRXY3T01nS2tTdUR4eFRLUHJ1TmpoRzFnUzBFcDJfVG9rZW46Ym94Y25UOHRHUFRmNGx2WkdVV0lqeDE0QXdjXzE2NDQ0OTIzODU6MTY0NDQ5NTk4NV9WNA" alt="img"></p>
+<h3 id="2-Bloom-Filter"><a href="#2-Bloom-Filter" class="headerlink" title="2.Bloom Filter"></a>2.Bloom Filter</h3><p>Bloom Filter是一种空间效率很高的随机数据结构，它利用位数组很简洁地表示一个集合，并能判断一个元素是否属于这个集合。</p>
+<p>Bloom Filter的这种高效是有一定代价的：在判断一个元素是否属于某个集合时，有可能会把不属于这个集合的元素误认为属于这个集合（false positive）。因此，Bloom Filter不适合那些“零错误”的应用场合。而在能容忍低错误率的应用场合下，Bloom Filter通过极少的错误换取了存储空间的极大节省。</p>
+<h4 id="2-1集合表示和元素查询"><a href="#2-1集合表示和元素查询" class="headerlink" title="2.1集合表示和元素查询"></a>2.1集合表示和元素查询</h4><p>下面我们具体来看Bloom Filter是如何用位数组表示集合的。初始状态时，Bloom Filter是一个包含m位的位数组，每一位都置为0。</p>
+<p><img src="https://p-blog.csdn.net/images/p_blog_csdn_net/jiaomeng/275417/o_bf1.jpg" alt="img"></p>
+<p>为了表达S={x1, x2,…,xn}这样一个n个元素的集合，Bloom Filter使用k个相互独立的哈希函数（Hash Function），它们分别将集合中的每个元素映射到{1,…,m}的范围中。对任意一个元素x，第i个哈希函数映射的位置hi(x)就会被置为1（1≤i≤k）。注意，如果一个位置多次被置为1，那么只有第一次会起作用，后面几次将没有任何效果。在下图中，k=3，且有两个哈希函数选中同一个位置（从左边数第五位）。   </p>
+<p> <img src="https://p-blog.csdn.net/images/p_blog_csdn_net/jiaomeng/275417/o_bf2.jpg" alt="img"></p>
+<p>在判断y是否属于这个集合时，我们对y应用k次哈希函数，如果所有hi(y)的位置都是1（1≤i≤k），那么我们就认为y是集合中的元素，否则就认为y不是集合中的元素。下图中y1就不是集合中的元素。y2或者属于这个集合，或者刚好是一个false positive。</p>
+<p><img src="https://p-blog.csdn.net/images/p_blog_csdn_net/jiaomeng/275417/o_bf3.jpg" alt="img"></p>
  
       <!-- reward -->
       
@@ -213,12 +210,12 @@
     <a class="modal-close" href="javascript:;"><i class="ri-close-circle-line"></i></a>
     <p>扫一扫，分享到微信</p>
     <div class="wx-qrcode">
-      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/" alt="微信分享二维码">
+      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2022/02/05/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%940.%E5%89%8D%E7%BD%AE%E7%9F%A5%E8%AF%86/" alt="微信分享二维码">
     </div>
 </div>
 
 <div id="share-mask"></div>  
-  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/OCSSD/" rel="tag">OCSSD</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/QEMU/" rel="tag">QEMU</a></li></ul>
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LevelDB/" rel="tag">LevelDB</a></li></ul>
 
     </footer>
   </div>
@@ -226,19 +223,19 @@
    
   <nav class="article-nav">
     
-      <a href="/2022/02/05/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%940.%E5%89%8D%E7%BD%AE%E7%9F%A5%E8%AF%86/" class="article-nav-link">
+      <a href="/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%941.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/" class="article-nav-link">
         <strong class="article-nav-caption">上一篇</strong>
         <div class="article-nav-title">
           
-            LevelDB源码分析——0.前置知识
+            LevelDB源码分析——1.基本的数据结构
           
         </div>
       </a>
     
     
-      <a href="/2021/06/17/About-Me/" class="article-nav-link">
+      <a href="/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/" class="article-nav-link">
         <strong class="article-nav-caption">下一篇</strong>
-        <div class="article-nav-title">About Me</div>
+        <div class="article-nav-title">Virtual OCSSD 环境搭建</div>
       </a>
     
   </nav>

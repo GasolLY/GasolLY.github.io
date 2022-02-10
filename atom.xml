@@ -6,7 +6,7 @@
   <link href="http://gasolly.github.io/atom.xml" rel="self"/>
   
   <link href="http://gasolly.github.io/"/>
-  <updated>2022-02-07T04:49:34.969Z</updated>
+  <updated>2022-02-10T12:22:02.407Z</updated>
   <id>http://gasolly.github.io/</id>
   
   <author>
@@ -17,9 +17,208 @@
   <generator uri="https://hexo.io/">Hexo</generator>
   
   <entry>
+    <title>LevelDB源码分析——10.Compaction操作</title>
+    <link href="http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%9410.Compaction%E6%93%8D%E4%BD%9C/"/>
+    <id>http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%9410.Compaction%E6%93%8D%E4%BD%9C/</id>
+    <published>2022-02-10T10:30:30.000Z</published>
+    <updated>2022-02-10T12:22:02.407Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;h2 id=&quot;十-Compaction操作&quot;&gt;&lt;a href=&quot;#十-Compaction操作&quot; class=&quot;headerlink&quot; title=&quot;十.Compaction操作&quot;&gt;&lt;/a&gt;十.Compaction操作&lt;/h2&gt;&lt;p&gt;LevelDB</summary>
+        
+      
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——9.读写完整流程</title>
+    <link href="http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%949.%E8%AF%BB%E5%86%99%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B/"/>
+    <id>http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%949.%E8%AF%BB%E5%86%99%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B/</id>
+    <published>2022-02-10T08:30:30.000Z</published>
+    <updated>2022-02-10T12:19:14.153Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;h2 id=&quot;九-读写完整流程&quot;&gt;&lt;a href=&quot;#九-读写完整流程&quot; class=&quot;headerlink&quot; title=&quot;九.读写完整流程&quot;&gt;&lt;/a&gt;九.读写完整流程&lt;/h2&gt;&lt;p&gt;本系列之前的数篇博文从面向对象的角度分析了 LevelDB</summary>
+        
+      
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——8.版本管理</title>
+    <link href="http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%948.%E7%89%88%E6%9C%AC%E7%AE%A1%E7%90%86/"/>
+    <id>http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%948.%E7%89%88%E6%9C%AC%E7%AE%A1%E7%90%86/</id>
+    <published>2022-02-10T07:30:30.000Z</published>
+    <updated>2022-02-10T12:15:16.774Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;h2 id=&quot;八-版本管理&quot;&gt;&lt;a href=&quot;#八-版本管理&quot; class=&quot;headerlink&quot; title=&quot;八.版本管理&quot;&gt;&lt;/a&gt;八.版本管理&lt;/h2&gt;&lt;p&gt;本系列的上一篇介绍了 Sorted Table 的构建和读取过程。当 Sorted Table</summary>
+        
+      
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——7.Sorted String Table续</title>
+    <link href="http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%947.Sorted%20String%20Table%E7%BB%AD/"/>
+    <id>http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%947.Sorted%20String%20Table%E7%BB%AD/</id>
+    <published>2022-02-10T06:30:30.000Z</published>
+    <updated>2022-02-10T12:12:30.705Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;h2 id=&quot;七-Sorted-String-Table续&quot;&gt;&lt;a href=&quot;#七-Sorted-String-Table续&quot; class=&quot;headerlink&quot; title=&quot;七.Sorted String Table续&quot;&gt;&lt;/a&gt;七.Sorted String</summary>
+        
+      
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——6.Sorted String Table</title>
+    <link href="http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%946.Sorted%20String%20Table/"/>
+    <id>http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%946.Sorted%20String%20Table/</id>
+    <published>2022-02-10T05:30:30.000Z</published>
+    <updated>2022-02-10T12:08:26.944Z</updated>
+    
+    
+    <summary type="html">&lt;h2 id=&quot;六-Sorted-String-Table&quot;&gt;&lt;a href=&quot;#六-Sorted-String-Table&quot; class=&quot;headerlink&quot; title=&quot;六.Sorted String Table&quot;&gt;&lt;/a&gt;六.Sorted String Table&lt;/h2&gt;&lt;p&gt;本系列的上一篇介绍了内存数据库，并且提到了内存数据库的大小限制问题。当内存数据块占用的内存达到阈值时（LevelDB 默认 4MB），会将当前的内存数据库 &lt;code&gt;mem_&lt;/code&gt; 转为不可修改的 &lt;code&gt;imm_&lt;/code&gt;，并且为 &lt;code&gt;mem_&lt;/code&gt; 赋值一个新的内存数据库。这使得内存数据库的大小始终保持在阈值以下，同时保持着超高的读写性能。而不可修改的 &lt;code&gt;imm_&lt;/code&gt; 会经历Compaction 过程，转为 Sorted Table 存储到磁盘中。本篇将详细阐述该过程。&lt;/p&gt;</summary>
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——5.不同的主键Key类型</title>
+    <link href="http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%945.%E4%B8%8D%E5%90%8C%E7%9A%84%E4%B8%BB%E9%94%AEKey%E7%B1%BB%E5%9E%8B/"/>
+    <id>http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%945.%E4%B8%8D%E5%90%8C%E7%9A%84%E4%B8%BB%E9%94%AEKey%E7%B1%BB%E5%9E%8B/</id>
+    <published>2022-02-10T02:30:30.000Z</published>
+    <updated>2022-02-10T12:01:59.719Z</updated>
+    
+    
+      
+      
+        
+        
+    <summary type="html">&lt;h2 id=&quot;五-不同的主键Key类型&quot;&gt;&lt;a href=&quot;#五-不同的主键Key类型&quot; class=&quot;headerlink&quot;</summary>
+        
+      
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——4.内存数据库</title>
+    <link href="http://gasolly.github.io/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%944.%E5%86%85%E5%AD%98%E6%95%B0%E6%8D%AE%E5%BA%93/"/>
+    <id>http://gasolly.github.io/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%944.%E5%86%85%E5%AD%98%E6%95%B0%E6%8D%AE%E5%BA%93/</id>
+    <published>2022-02-09T13:30:30.000Z</published>
+    <updated>2022-02-10T12:02:25.010Z</updated>
+    
+    
+    <summary type="html">&lt;h2 id=&quot;四-内存数据库&quot;&gt;&lt;a href=&quot;#四-内存数据库&quot; class=&quot;headerlink&quot; title=&quot;四.内存数据库&quot;&gt;&lt;/a&gt;四.内存数据库&lt;/h2&gt;&lt;p&gt;本系列的上一篇介绍了 LevelDB 写操作中构造的 &lt;code&gt;WriteBatch&lt;/code&gt;，以及写操作的第一步：追加日志。本篇将继续介绍写操作的第二步：插入内存数据库。&lt;/p&gt;</summary>
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——3.日志</title>
+    <link href="http://gasolly.github.io/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%943.%E6%97%A5%E5%BF%97/"/>
+    <id>http://gasolly.github.io/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%943.%E6%97%A5%E5%BF%97/</id>
+    <published>2022-02-09T10:40:25.000Z</published>
+    <updated>2022-02-10T11:32:09.532Z</updated>
+    
+    
+    <summary type="html">&lt;h2 id=&quot;三-日志&quot;&gt;&lt;a href=&quot;#三-日志&quot; class=&quot;headerlink&quot; title=&quot;三.日志&quot;&gt;&lt;/a&gt;三.日志&lt;/h2&gt;&lt;p&gt;本系列的&lt;a href=&quot;https://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD/&quot;&gt;前两篇&lt;/a&gt;介绍了 LevelDB 中使用的数据结构，并没有牵涉到 LevelDB 的核心实现。接下来的几篇将着重介绍 LevelDB 核心组件，包括日志、内存数据库、SortedTable、Compaction 和版本管理。本篇着重阐述高性能写操作的核心：日志和内存数据库。&lt;/p&gt;
+&lt;p&gt;怎样最快地把键值对存起来？不考虑查找的速度的话，追加地写入文件是最快的，查找时反向查找。举个例子🌰：&lt;/p&gt;</summary>
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
     <title>LevelDB源码分析——2.基本的数据结构续</title>
-    <link href="http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD/"/>
-    <id>http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD/</id>
+    <link href="http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD%20(copy)/"/>
+    <id>http://gasolly.github.io/2022/02/07/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%942.%E5%9F%BA%E6%9C%AC%E7%9A%84%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%BB%AD%20(copy)/</id>
     <published>2022-02-07T04:40:15.000Z</published>
     <updated>2022-02-07T04:49:34.969Z</updated>
     
@@ -47,6 +246,27 @@
     
     <summary type="html">&lt;h2 id=&quot;一．基本的数据结构&quot;&gt;&lt;a href=&quot;#一．基本的数据结构&quot; class=&quot;headerlink&quot; title=&quot;一．基本的数据结构&quot;&gt;&lt;/a&gt;一．基本的数据结构&lt;/h2&gt;&lt;p&gt;为了督促自己认真的阅读LevelDB源码，同时记录下相关的收获，避免阅后即忘，因此在Blog中记录下LevelDB源码分析的相关内容。&lt;/p&gt;
 &lt;p&gt;本文会介绍 LevelDB 中的基本数据结构，包括 &lt;code&gt;Slice&lt;/code&gt;、&lt;code&gt;Hash&lt;/code&gt;、&lt;code&gt;LRUCache&lt;/code&gt;。&lt;/p&gt;</summary>
+    
+    
+    
+    <category term="学习" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/"/>
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/categories/%E5%AD%A6%E4%B9%A0/LevelDB/"/>
+    
+    
+    <category term="LevelDB" scheme="http://gasolly.github.io/tags/LevelDB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>LevelDB源码分析——0.前置知识</title>
+    <link href="http://gasolly.github.io/2022/02/05/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%940.%E5%89%8D%E7%BD%AE%E7%9F%A5%E8%AF%86/"/>
+    <id>http://gasolly.github.io/2022/02/05/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%940.%E5%89%8D%E7%BD%AE%E7%9F%A5%E8%AF%86/</id>
+    <published>2022-02-05T04:00:41.000Z</published>
+    <updated>2022-02-10T11:31:52.555Z</updated>
+    
+    
+    <summary type="html">&lt;h2 id=&quot;零．前置知识&quot;&gt;&lt;a href=&quot;#零．前置知识&quot; class=&quot;headerlink&quot; title=&quot;零．前置知识&quot;&gt;&lt;/a&gt;零．前置知识&lt;/h2&gt;&lt;p&gt;本节为LevelDB源码分析的第0章，主要介绍LevelDB相关的前置知识。包括：&lt;code&gt;LSM Tree&lt;/code&gt;、&lt;code&gt;Bloom Filter&lt;/code&gt;。&lt;/p&gt;</summary>
     
     
     

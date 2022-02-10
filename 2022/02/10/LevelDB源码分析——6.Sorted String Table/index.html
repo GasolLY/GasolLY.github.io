@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+
+
+<html lang="en">
+  
+
+    <head>
+      <meta charset="utf-8" />
+        
+      <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1"
+      />
+      <title>LevelDB源码分析——6.Sorted String Table |  Gasol</title>
+  <meta name="generator" content="hexo-theme-ayer">
+      
+      <link rel="shortcut icon" href="/favicon.ico" />
+       
+<link rel="stylesheet" href="/dist/main.css">
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/Shen-Yu/cdn/css/remixicon.min.css"
+      />
+      
+<link rel="stylesheet" href="/css/custom.css">
+ 
+      <script src="https://cdn.jsdelivr.net/npm/pace-js@1.0.2/pace.min.js"></script>
+       
+ 
+
+      <!-- mermaid -->
+      
+    <link rel="alternate" href="/atom.xml" title="Gasol" type="application/atom+xml">
+</head>
+  </html>
+</html>
+
+
+<body>
+  <div id="app">
+    
+      
+    <main class="content on">
+      <section class="outer">
+  <article
+  id="post-LevelDB源码分析——6.Sorted String Table"
+  class="article article-type-post"
+  itemscope
+  itemprop="blogPost"
+  data-scroll-reveal
+>
+  <div class="article-inner">
+    
+    <header class="article-header">
+       
+<h1 class="article-title sea-center" style="border-left:0" itemprop="name">
+  LevelDB源码分析——6.Sorted String Table
+</h1>
+ 
+
+      
+    </header>
+     
+    <div class="article-meta">
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%946.Sorted%20String%20Table/" class="article-date">
+  <time datetime="2022-02-10T05:30:30.000Z" itemprop="datePublished">2022-02-10</time>
+</a> 
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/LevelDB/">LevelDB</a>
+  </div>
+  
+<div class="word_count">
+    <span class="post-time">
+        <span class="post-meta-item-icon">
+            <i class="ri-quill-pen-line"></i>
+            <span class="post-meta-item-text"> Word count:</span>
+            <span class="post-count">5.4k</span>
+        </span>
+    </span>
+
+    <span class="post-time">
+        &nbsp; | &nbsp;
+        <span class="post-meta-item-icon">
+            <i class="ri-book-open-line"></i>
+            <span class="post-meta-item-text"> Reading time≈</span>
+            <span class="post-count">28 min</span>
+        </span>
+    </span>
+</div>
+ 
+    </div>
+      
+    <div class="tocbot"></div>
+
+
+
+
+  
+    <div class="article-entry" itemprop="articleBody">
+       
+  <h2 id="六-Sorted-String-Table"><a href="#六-Sorted-String-Table" class="headerlink" title="六.Sorted String Table"></a>六.Sorted String Table</h2><p>本系列的上一篇介绍了内存数据库，并且提到了内存数据库的大小限制问题。当内存数据块占用的内存达到阈值时（LevelDB 默认 4MB），会将当前的内存数据库 <code>mem_</code> 转为不可修改的 <code>imm_</code>，并且为 <code>mem_</code> 赋值一个新的内存数据库。这使得内存数据库的大小始终保持在阈值以下，同时保持着超高的读写性能。而不可修改的 <code>imm_</code> 会经历Compaction 过程，转为 Sorted Table 存储到磁盘中。本篇将详细阐述该过程。</p>
+<span id="more"></span>
+
+<h3 id="1-Compact-内存数据库"><a href="#1-Compact-内存数据库" class="headerlink" title="1. Compact 内存数据库"></a>1. Compact 内存数据库</h3><p>在 <code>DBImpl::Write</code> 写入内存数据库前，会先调用 <code>DBImpl::MakeRoomForWrite</code> 申请空间：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Status <span class="title">DBImpl::MakeRoomForWrite</span><span class="params">(<span class="keyword">bool</span> force)</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line">  <span class="built_in">assert</span>(!writers_.<span class="built_in">empty</span>());</span><br><span class="line">  <span class="keyword">bool</span> allow_delay = !force;</span><br><span class="line">  Status s;</span><br><span class="line">  <span class="keyword">while</span> (<span class="literal">true</span>) &#123;</span><br><span class="line">    <span class="keyword">if</span> (!bg_error_.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      <span class="comment">// Yield previous error</span></span><br><span class="line">      s = bg_error_;</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (allow_delay &amp;&amp; versions_-&gt;<span class="built_in">NumLevelFiles</span>(<span class="number">0</span>) &gt;=</span><br><span class="line">                                  config::kL0_SlowdownWritesTrigger) &#123;</span><br><span class="line">      <span class="comment">// We are getting close to hitting a hard limit on the number of</span></span><br><span class="line">      <span class="comment">// L0 files.  Rather than delaying a single write by several</span></span><br><span class="line">      <span class="comment">// seconds when we hit the hard limit, start delaying each</span></span><br><span class="line">      <span class="comment">// individual write by 1ms to reduce latency variance.  Also,</span></span><br><span class="line">      <span class="comment">// this delay hands over some CPU to the compaction thread in</span></span><br><span class="line">      <span class="comment">// case it is sharing the same core as the writer.</span></span><br><span class="line">      mutex_.<span class="built_in">Unlock</span>();</span><br><span class="line">      env_-&gt;<span class="built_in">SleepForMicroseconds</span>(<span class="number">1000</span>);</span><br><span class="line">      allow_delay = <span class="literal">false</span>;  <span class="comment">// Do not delay a single write more than once</span></span><br><span class="line">      mutex_.<span class="built_in">Lock</span>();</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (!force &amp;&amp;</span><br><span class="line">               (mem_-&gt;<span class="built_in">ApproximateMemoryUsage</span>() &lt;= options_.write_buffer_size)) &#123;</span><br><span class="line">      <span class="comment">// There is room in current memtable</span></span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (imm_ != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">      <span class="comment">// We have filled up the current memtable, but the previous</span></span><br><span class="line">      <span class="comment">// one is still being compacted, so we wait.</span></span><br><span class="line">      <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Current memtable full; waiting...\n&quot;</span>);</span><br><span class="line">      background_work_finished_signal_.<span class="built_in">Wait</span>();</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (versions_-&gt;<span class="built_in">NumLevelFiles</span>(<span class="number">0</span>) &gt;= config::kL0_StopWritesTrigger) &#123;</span><br><span class="line">      <span class="comment">// There are too many level-0 files.</span></span><br><span class="line">      <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Too many L0 files; waiting...\n&quot;</span>);</span><br><span class="line">      background_work_finished_signal_.<span class="built_in">Wait</span>();</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      <span class="comment">// Attempt to switch to a new memtable and trigger compaction of old</span></span><br><span class="line">      <span class="built_in">assert</span>(versions_-&gt;<span class="built_in">PrevLogNumber</span>() == <span class="number">0</span>);</span><br><span class="line">      <span class="keyword">uint64_t</span> new_log_number = versions_-&gt;<span class="built_in">NewFileNumber</span>();</span><br><span class="line">      WritableFile* lfile = <span class="literal">nullptr</span>;</span><br><span class="line">      s = env_-&gt;<span class="built_in">NewWritableFile</span>(<span class="built_in">LogFileName</span>(dbname_, new_log_number), &amp;lfile);</span><br><span class="line">      <span class="keyword">if</span> (!s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">        <span class="comment">// Avoid chewing through file number space in a tight loop.</span></span><br><span class="line">        versions_-&gt;<span class="built_in">ReuseFileNumber</span>(new_log_number);</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">      &#125;</span><br><span class="line">      <span class="keyword">delete</span> log_;</span><br><span class="line">      <span class="keyword">delete</span> logfile_;</span><br><span class="line">      logfile_ = lfile;</span><br><span class="line">      logfile_number_ = new_log_number;</span><br><span class="line">      log_ = <span class="keyword">new</span> log::<span class="built_in">Writer</span>(lfile);</span><br><span class="line">      imm_ = mem_;</span><br><span class="line">      has_imm_.<span class="built_in">store</span>(<span class="literal">true</span>, std::memory_order_release);</span><br><span class="line">      mem_ = <span class="keyword">new</span> <span class="built_in">MemTable</span>(internal_comparator_);</span><br><span class="line">      mem_-&gt;<span class="built_in">Ref</span>();</span><br><span class="line">      force = <span class="literal">false</span>;  <span class="comment">// Do not force another compaction if have room</span></span><br><span class="line">      <span class="built_in">MaybeScheduleCompaction</span>();</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在 While 循环中，会依次检查：</p>
+<ol>
+<li>是否有后台错误，如果是就退出；</li>
+<li>是否允许延迟、并且现有的 L0 文件稍多，如果是则释放锁、等待 1 毫秒、再等待锁，并且不允许再次等待；</li>
+<li>是否非强制模式、并且内存数据库大小没有超出阈值，如果是就还有空间、可以退出了；</li>
+<li>是否 <code>imm_</code> 还在 Compact 中，如果是就等待 Compact 完成（条件变量）；</li>
+<li>是否现有的 L0 文件太多，如果是就等待 Compact 完成（条件变量）；</li>
+<li>以上都不是，那就说明当前的 <code>mem_</code> 满了，把它丢给 <code>imm_</code>，再新建一个 <code>mem_</code>，触发 Compaction。</li>
+</ol>
+<p>除了第 1 步和第 3 步，其他步骤完成后均重新进入循环，最终从 1 或 3 中退出。第 2 步中当 L0 文件数目达到 <code>kL0_SlowdownWritesTrigger</code> 限制时，对每个写入请求等待 1 毫秒，也就减缓了写入的速度；第 5 步中当 L0 文件数目达到 <code>kL0_StopWritesTrigger</code> 限制时，就强制等待当前的 Compact 完成，直到 L0 文件数目小于限制时，下次循环才能到达第 6 步。</p>
+<p>继续看 <code>MaybeScheduleCompaction</code> 及其后续过程：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::MaybeScheduleCompaction</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line">  <span class="keyword">if</span> (background_compaction_scheduled_) &#123;</span><br><span class="line">    <span class="comment">// Already scheduled</span></span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (shutting_down_.<span class="built_in">load</span>(std::memory_order_acquire)) &#123;</span><br><span class="line">    <span class="comment">// DB is being deleted; no more background compactions</span></span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (!bg_error_.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="comment">// Already got an error; no more changes</span></span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (imm_ == <span class="literal">nullptr</span> &amp;&amp; manual_compaction_ == <span class="literal">nullptr</span> &amp;&amp;</span><br><span class="line">             !versions_-&gt;<span class="built_in">NeedsCompaction</span>()) &#123;</span><br><span class="line">    <span class="comment">// No work to be done</span></span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    background_compaction_scheduled_ = <span class="literal">true</span>;</span><br><span class="line">    env_-&gt;<span class="built_in">Schedule</span>(&amp;DBImpl::BGWork, <span class="keyword">this</span>);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::BGWork</span><span class="params">(<span class="keyword">void</span>* db)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">reinterpret_cast</span>&lt;DBImpl*&gt;(db)-&gt;<span class="built_in">BackgroundCall</span>();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::BackgroundCall</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  <span class="function">MutexLock <span class="title">l</span><span class="params">(&amp;mutex_)</span></span>;</span><br><span class="line">  <span class="built_in">assert</span>(background_compaction_scheduled_);</span><br><span class="line">  <span class="keyword">if</span> (shutting_down_.<span class="built_in">load</span>(std::memory_order_acquire)) &#123;</span><br><span class="line">    <span class="comment">// No more background work when shutting down.</span></span><br><span class="line">  &#125; <span class="keyword">else</span> <span class="keyword">if</span> (!bg_error_.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="comment">// No more background work after a background error.</span></span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="built_in">BackgroundCompaction</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  background_compaction_scheduled_ = <span class="literal">false</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Previous compaction may have produced too many files in a level,</span></span><br><span class="line">  <span class="comment">// so reschedule another compaction if needed.</span></span><br><span class="line">  <span class="built_in">MaybeScheduleCompaction</span>();</span><br><span class="line">  background_work_finished_signal_.<span class="built_in">SignalAll</span>();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::BackgroundCompaction</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (imm_ != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    <span class="built_in">CompactMemTable</span>();</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">// ...</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">DBImpl::CompactMemTable</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line">  <span class="built_in">assert</span>(imm_ != <span class="literal">nullptr</span>);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Save the contents of the memtable as a new Table</span></span><br><span class="line">  VersionEdit edit;</span><br><span class="line">  Version* base = versions_-&gt;<span class="built_in">current</span>();</span><br><span class="line">  base-&gt;<span class="built_in">Ref</span>();</span><br><span class="line">  Status s = <span class="built_in">WriteLevel0Table</span>(imm_, &amp;edit, base);</span><br><span class="line">  base-&gt;<span class="built_in">Unref</span>();</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>() &amp;&amp; shutting_down_.<span class="built_in">load</span>(std::memory_order_acquire)) &#123;</span><br><span class="line">    s = Status::<span class="built_in">IOError</span>(<span class="string">&quot;Deleting DB during memtable compaction&quot;</span>);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Replace immutable memtable with the generated Table</span></span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    edit.<span class="built_in">SetPrevLogNumber</span>(<span class="number">0</span>);</span><br><span class="line">    edit.<span class="built_in">SetLogNumber</span>(logfile_number_);  <span class="comment">// Earlier logs no longer needed</span></span><br><span class="line">    s = versions_-&gt;<span class="built_in">LogAndApply</span>(&amp;edit, &amp;mutex_);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="comment">// Commit to the new state</span></span><br><span class="line">    imm_-&gt;<span class="built_in">Unref</span>();</span><br><span class="line">    imm_ = <span class="literal">nullptr</span>;</span><br><span class="line">    has_imm_.<span class="built_in">store</span>(<span class="literal">false</span>, std::memory_order_release);</span><br><span class="line">    <span class="built_in">DeleteObsoleteFiles</span>();</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="built_in">RecordBackgroundError</span>(s);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">DBImpl::WriteLevel0Table</span><span class="params">(MemTable* mem, VersionEdit* edit,</span></span></span><br><span class="line"><span class="params"><span class="function">                                Version* base)</span> </span>&#123;</span><br><span class="line">  mutex_.<span class="built_in">AssertHeld</span>();</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">uint64_t</span> start_micros = env_-&gt;<span class="built_in">NowMicros</span>();</span><br><span class="line">  FileMetaData meta;</span><br><span class="line">  meta.number = versions_-&gt;<span class="built_in">NewFileNumber</span>();</span><br><span class="line">  pending_outputs_.<span class="built_in">insert</span>(meta.number);</span><br><span class="line">  Iterator* iter = mem-&gt;<span class="built_in">NewIterator</span>();</span><br><span class="line">  <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Level-0 table #%llu: started&quot;</span>,</span><br><span class="line">      (<span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span>)meta.number);</span><br><span class="line"></span><br><span class="line">  Status s;</span><br><span class="line">  &#123;</span><br><span class="line">    mutex_.<span class="built_in">Unlock</span>();</span><br><span class="line">    s = <span class="built_in">BuildTable</span>(dbname_, env_, options_, table_cache_, iter, &amp;meta);</span><br><span class="line">    mutex_.<span class="built_in">Lock</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">Log</span>(options_.info_log, <span class="string">&quot;Level-0 table #%llu: %lld bytes %s&quot;</span>,</span><br><span class="line">      (<span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span>)meta.number, (<span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span>)meta.file_size,</span><br><span class="line">      s.<span class="built_in">ToString</span>().<span class="built_in">c_str</span>());</span><br><span class="line">  <span class="keyword">delete</span> iter;</span><br><span class="line">  pending_outputs_.<span class="built_in">erase</span>(meta.number);</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Note that if file_size is zero, the file has been deleted and</span></span><br><span class="line">  <span class="comment">// should not be added to the manifest.</span></span><br><span class="line">  <span class="keyword">int</span> level = <span class="number">0</span>;</span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>() &amp;&amp; meta.file_size &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="keyword">const</span> Slice min_user_key = meta.smallest.<span class="built_in">user_key</span>();</span><br><span class="line">    <span class="keyword">const</span> Slice max_user_key = meta.largest.<span class="built_in">user_key</span>();</span><br><span class="line">    <span class="keyword">if</span> (base != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">      level = base-&gt;<span class="built_in">PickLevelForMemTableOutput</span>(min_user_key, max_user_key);</span><br><span class="line">    &#125;</span><br><span class="line">    edit-&gt;<span class="built_in">AddFile</span>(level, meta.number, meta.file_size, meta.smallest,</span><br><span class="line">                  meta.largest);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  CompactionStats stats;</span><br><span class="line">  stats.micros = env_-&gt;<span class="built_in">NowMicros</span>() - start_micros;</span><br><span class="line">  stats.bytes_written = meta.file_size;</span><br><span class="line">  stats_[level].<span class="built_in">Add</span>(stats);</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>MaybeScheduleCompaction</code> 经过一些判断，最后调用 <code>env_-&gt;Schedule</code> 创建一个 Detached 的线程启动 <code>DBImpl::BGWork</code>，继而调用 <code>DBImpl::BackgroundCall</code>，继而调用 <code>DBImpl::BackgroundCompaction</code>。该函数在 <code>imm_</code> 非空的情况下，直接执行 <code>CompactMemTable</code> 返回。<code>CompactMemTable</code> 的核心操作为 <code>WriteLevel0Table(imm_, &amp;edit, base)</code>，将会把 <code>imm_</code> 中的数据写到 Level0 Table 里。这是我们第一次碰触到 LevelDB 名字中 Level 的边缘。</p>
+<p>如果先不看 Version 相关的部分，<code>WriteLevel0Table</code> 会调用 <code>BuildTable</code> 建 Sorted Table。该函数的实现位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/builder.cc"><code>db/builder.cc</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/builder.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/dbformat.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/filename.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/table_cache.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;db/version_edit.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/db.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/env.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/iterator.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">BuildTable</span><span class="params">(<span class="keyword">const</span> std::string&amp; dbname, Env* env, <span class="keyword">const</span> Options&amp; options,</span></span></span><br><span class="line"><span class="params"><span class="function">                  TableCache* table_cache, Iterator* iter, FileMetaData* meta)</span> </span>&#123;</span><br><span class="line">  Status s;</span><br><span class="line">  meta-&gt;file_size = <span class="number">0</span>;</span><br><span class="line">  iter-&gt;<span class="built_in">SeekToFirst</span>();</span><br><span class="line"></span><br><span class="line">  std::string fname = <span class="built_in">TableFileName</span>(dbname, meta-&gt;number);</span><br><span class="line">  <span class="keyword">if</span> (iter-&gt;<span class="built_in">Valid</span>()) &#123;</span><br><span class="line">    WritableFile* file;</span><br><span class="line">    s = env-&gt;<span class="built_in">NewWritableFile</span>(fname, &amp;file);</span><br><span class="line">    <span class="keyword">if</span> (!s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      <span class="keyword">return</span> s;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    TableBuilder* builder = <span class="keyword">new</span> <span class="built_in">TableBuilder</span>(options, file);</span><br><span class="line">    meta-&gt;smallest.<span class="built_in">DecodeFrom</span>(iter-&gt;<span class="built_in">key</span>());</span><br><span class="line">    <span class="keyword">for</span> (; iter-&gt;<span class="built_in">Valid</span>(); iter-&gt;<span class="built_in">Next</span>()) &#123;</span><br><span class="line">      Slice key = iter-&gt;<span class="built_in">key</span>();</span><br><span class="line">      meta-&gt;largest.<span class="built_in">DecodeFrom</span>(key);</span><br><span class="line">      builder-&gt;<span class="built_in">Add</span>(key, iter-&gt;<span class="built_in">value</span>());</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// Finish and check for builder errors</span></span><br><span class="line">    s = builder-&gt;<span class="built_in">Finish</span>();</span><br><span class="line">    <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      meta-&gt;file_size = builder-&gt;<span class="built_in">FileSize</span>();</span><br><span class="line">      <span class="built_in">assert</span>(meta-&gt;file_size &gt; <span class="number">0</span>);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">delete</span> builder;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// Finish and check for file errors</span></span><br><span class="line">    <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      s = file-&gt;<span class="built_in">Sync</span>();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      s = file-&gt;<span class="built_in">Close</span>();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">delete</span> file;</span><br><span class="line">    file = <span class="literal">nullptr</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (s.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      <span class="comment">// Verify that the table is usable</span></span><br><span class="line">      Iterator* it = table_cache-&gt;<span class="built_in">NewIterator</span>(<span class="built_in">ReadOptions</span>(), meta-&gt;number,</span><br><span class="line">                                              meta-&gt;file_size);</span><br><span class="line">      s = it-&gt;<span class="built_in">status</span>();</span><br><span class="line">      <span class="keyword">delete</span> it;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Check for input iterator errors</span></span><br><span class="line">  <span class="keyword">if</span> (!iter-&gt;<span class="built_in">status</span>().<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    s = iter-&gt;<span class="built_in">status</span>();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (s.<span class="built_in">ok</span>() &amp;&amp; meta-&gt;file_size &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="comment">// Keep it</span></span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    env-&gt;<span class="built_in">DeleteFile</span>(fname);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p>核心操作是遍历迭代器，将键值对加入到一个 <code>TableBuilder</code> 对象里，同时维护 <code>meta</code> 信息，包括 <code>smallest</code>、<code>largest</code> 和 <code>file_size</code>。</p>
+<h3 id="2-Block-Builder"><a href="#2-Block-Builder" class="headerlink" title="2. Block Builder"></a>2. Block Builder</h3><p>在介绍 <code>TableBuilder</code> 之前，需要先介绍它的依赖 <code>BlockBuilder</code>。先看 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/table/block_builder.h"><code>table/block_builder.h</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">BlockBuilder</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="function"><span class="keyword">explicit</span> <span class="title">BlockBuilder</span><span class="params">(<span class="keyword">const</span> Options* options)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">BlockBuilder</span>(<span class="keyword">const</span> BlockBuilder&amp;) = <span class="keyword">delete</span>;</span><br><span class="line">  BlockBuilder&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> BlockBuilder&amp;) = <span class="keyword">delete</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Reset the contents as if the BlockBuilder was just constructed.</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Reset</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// REQUIRES: Finish() has not been called since the last call to Reset().</span></span><br><span class="line">  <span class="comment">// REQUIRES: key is larger than any previously added key</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Add</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Finish building the block and return a slice that refers to the</span></span><br><span class="line">  <span class="comment">// block contents.  The returned slice will remain valid for the</span></span><br><span class="line">  <span class="comment">// lifetime of this builder or until Reset() is called.</span></span><br><span class="line">  <span class="function">Slice <span class="title">Finish</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Returns an estimate of the current (uncompressed) size of the block</span></span><br><span class="line">  <span class="comment">// we are building.</span></span><br><span class="line">  <span class="function"><span class="keyword">size_t</span> <span class="title">CurrentSizeEstimate</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return true iff no entries have been added since the last Reset()</span></span><br><span class="line">  <span class="function"><span class="keyword">bool</span> <span class="title">empty</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> buffer_.<span class="built_in">empty</span>(); &#125;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="keyword">const</span> Options* options_;</span><br><span class="line">  std::string buffer_;              <span class="comment">// Destination buffer</span></span><br><span class="line">  std::vector&lt;<span class="keyword">uint32_t</span>&gt; restarts_;  <span class="comment">// Restart points</span></span><br><span class="line">  <span class="keyword">int</span> counter_;                     <span class="comment">// Number of entries emitted since restart</span></span><br><span class="line">  <span class="keyword">bool</span> finished_;                   <span class="comment">// Has Finish() been called?</span></span><br><span class="line">  std::string last_key_;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>接口看不出什么，继续看实现 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/table/block_builder.cc"><code>table/block_builder.cc</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// BlockBuilder generates blocks where keys are prefix-compressed:</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// When we store a key, we drop the prefix shared with the previous</span></span><br><span class="line"><span class="comment">// string.  This helps reduce the space requirement significantly.</span></span><br><span class="line"><span class="comment">// Furthermore, once every K keys, we do not apply the prefix</span></span><br><span class="line"><span class="comment">// compression and store the entire key.  We call this a &quot;restart</span></span><br><span class="line"><span class="comment">// point&quot;.  The tail end of the block stores the offsets of all of the</span></span><br><span class="line"><span class="comment">// restart points, and can be used to do a binary search when looking</span></span><br><span class="line"><span class="comment">// for a particular key.  Values are stored as-is (without compression)</span></span><br><span class="line"><span class="comment">// immediately following the corresponding key.</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// An entry for a particular key-value pair has the form:</span></span><br><span class="line"><span class="comment">//     shared_bytes: varint32</span></span><br><span class="line"><span class="comment">//     unshared_bytes: varint32</span></span><br><span class="line"><span class="comment">//     value_length: varint32</span></span><br><span class="line"><span class="comment">//     key_delta: char[unshared_bytes]</span></span><br><span class="line"><span class="comment">//     value: char[value_length]</span></span><br><span class="line"><span class="comment">// shared_bytes == 0 for restart points.</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// The trailer of the block has the form:</span></span><br><span class="line"><span class="comment">//     restarts: uint32[num_restarts]</span></span><br><span class="line"><span class="comment">//     num_restarts: uint32</span></span><br><span class="line"><span class="comment">// restarts[i] contains the offset within the block of the ith restart point.</span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;table/block_builder.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;assert.h&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;algorithm&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/comparator.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/options.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;util/coding.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line">BlockBuilder::<span class="built_in">BlockBuilder</span>(<span class="keyword">const</span> Options* options)</span><br><span class="line">    : <span class="built_in">options_</span>(options), <span class="built_in">restarts_</span>(), <span class="built_in">counter_</span>(<span class="number">0</span>), <span class="built_in">finished_</span>(<span class="literal">false</span>) &#123;</span><br><span class="line">  <span class="built_in">assert</span>(options-&gt;block_restart_interval &gt;= <span class="number">1</span>);</span><br><span class="line">  restarts_.<span class="built_in">push_back</span>(<span class="number">0</span>);  <span class="comment">// First restart point is at offset 0</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">BlockBuilder::Reset</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  buffer_.<span class="built_in">clear</span>();</span><br><span class="line">  restarts_.<span class="built_in">clear</span>();</span><br><span class="line">  restarts_.<span class="built_in">push_back</span>(<span class="number">0</span>);  <span class="comment">// First restart point is at offset 0</span></span><br><span class="line">  counter_ = <span class="number">0</span>;</span><br><span class="line">  finished_ = <span class="literal">false</span>;</span><br><span class="line">  last_key_.<span class="built_in">clear</span>();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">size_t</span> <span class="title">BlockBuilder::CurrentSizeEstimate</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123;</span><br><span class="line">  <span class="keyword">return</span> (buffer_.<span class="built_in">size</span>() +                       <span class="comment">// Raw data buffer</span></span><br><span class="line">          restarts_.<span class="built_in">size</span>() * <span class="built_in"><span class="keyword">sizeof</span></span>(<span class="keyword">uint32_t</span>) +  <span class="comment">// Restart array</span></span><br><span class="line">          <span class="built_in"><span class="keyword">sizeof</span></span>(<span class="keyword">uint32_t</span>));                     <span class="comment">// Restart array length</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Slice <span class="title">BlockBuilder::Finish</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  <span class="comment">// Append restart array</span></span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">size_t</span> i = <span class="number">0</span>; i &lt; restarts_.<span class="built_in">size</span>(); i++) &#123;</span><br><span class="line">    <span class="built_in">PutFixed32</span>(&amp;buffer_, restarts_[i]);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="built_in">PutFixed32</span>(&amp;buffer_, restarts_.<span class="built_in">size</span>());</span><br><span class="line">  finished_ = <span class="literal">true</span>;</span><br><span class="line">  <span class="keyword">return</span> <span class="built_in">Slice</span>(buffer_);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">BlockBuilder::Add</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> </span>&#123;</span><br><span class="line">  <span class="function">Slice <span class="title">last_key_piece</span><span class="params">(last_key_)</span></span>;</span><br><span class="line">  <span class="built_in">assert</span>(!finished_);</span><br><span class="line">  <span class="built_in">assert</span>(counter_ &lt;= options_-&gt;block_restart_interval);</span><br><span class="line">  <span class="built_in">assert</span>(buffer_.<span class="built_in">empty</span>()  <span class="comment">// No values yet?</span></span><br><span class="line">         || options_-&gt;comparator-&gt;<span class="built_in">Compare</span>(key, last_key_piece) &gt; <span class="number">0</span>);</span><br><span class="line">  <span class="keyword">size_t</span> shared = <span class="number">0</span>;</span><br><span class="line">  <span class="keyword">if</span> (counter_ &lt; options_-&gt;block_restart_interval) &#123;</span><br><span class="line">    <span class="comment">// See how much sharing to do with previous string</span></span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">size_t</span> min_length = std::<span class="built_in">min</span>(last_key_piece.<span class="built_in">size</span>(), key.<span class="built_in">size</span>());</span><br><span class="line">    <span class="keyword">while</span> ((shared &lt; min_length) &amp;&amp; (last_key_piece[shared] == key[shared])) &#123;</span><br><span class="line">      shared++;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="comment">// Restart compression</span></span><br><span class="line">    restarts_.<span class="built_in">push_back</span>(buffer_.<span class="built_in">size</span>());</span><br><span class="line">    counter_ = <span class="number">0</span>;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">size_t</span> non_shared = key.<span class="built_in">size</span>() - shared;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Add &quot;&lt;shared&gt;&lt;non_shared&gt;&lt;value_size&gt;&quot; to buffer_</span></span><br><span class="line">  <span class="built_in">PutVarint32</span>(&amp;buffer_, shared);</span><br><span class="line">  <span class="built_in">PutVarint32</span>(&amp;buffer_, non_shared);</span><br><span class="line">  <span class="built_in">PutVarint32</span>(&amp;buffer_, value.<span class="built_in">size</span>());</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Add string delta to buffer_ followed by value</span></span><br><span class="line">  buffer_.<span class="built_in">append</span>(key.<span class="built_in">data</span>() + shared, non_shared);</span><br><span class="line">  buffer_.<span class="built_in">append</span>(value.<span class="built_in">data</span>(), value.<span class="built_in">size</span>());</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Update state</span></span><br><span class="line">  last_key_.<span class="built_in">resize</span>(shared);</span><br><span class="line">  last_key_.<span class="built_in">append</span>(key.<span class="built_in">data</span>() + shared, non_shared);</span><br><span class="line">  <span class="built_in">assert</span>(<span class="built_in">Slice</span>(last_key_) == key);</span><br><span class="line">  counter_++;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br></pre></td></tr></table></figure>
+
+<p>文件头部的英文注释写得十分详细。为了节约空间，<code>LevelDB</code> 存储键值对时，会利用局部性原理，将省略掉键与上一个键的共同前缀部分。存储一键值对时，按照下面的方式存储：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">shared_bytes: varint32           # Key 与上一个键共享的长度</span><br><span class="line">unshared_bytes: varint32         # Key 非共享长度</span><br><span class="line">value_length: varint32           # Value 的长度</span><br><span class="line">key_delta: char[unshared_bytes]  # Key 非共享部分</span><br><span class="line">value: char[value_length]        # Value</span><br></pre></td></tr></table></figure>
+
+<p>省略前缀节约了空间，但就无法方便地执行二分查找了。LevelDB 的解决方案是每隔 <code>K=16</code> 个键值队设定一个复活点（没错想想超级玛丽的复活点），复活点上将完整存储键、不进行前缀共享。<code>Block</code> 的结尾存储所有复活点的位置，查找时先在复活点上做二分查找，确定大概位置后再遍历恢复 Key 后对比。为了更好地表达这件事，这里画个表：</p>
+<table>
+<thead>
+<tr>
+<th>Original Key</th>
+<th>Shared</th>
+<th>Unshared</th>
+<th>Key Delta</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Abel</strong></td>
+<td><strong>0</strong></td>
+<td>4</td>
+<td>Abel</td>
+</tr>
+<tr>
+<td>Abner</td>
+<td>2</td>
+<td>3</td>
+<td>ner</td>
+</tr>
+<tr>
+<td>Abram</td>
+<td>2</td>
+<td>3</td>
+<td>ram</td>
+</tr>
+<tr>
+<td>Adam</td>
+<td>1</td>
+<td>3</td>
+<td>dam</td>
+</tr>
+<tr>
+<td><strong>Adelbert</strong></td>
+<td><strong>0</strong></td>
+<td>8</td>
+<td>Adelbert</td>
+</tr>
+<tr>
+<td>Adrian</td>
+<td>2</td>
+<td>4</td>
+<td>rian</td>
+</tr>
+<tr>
+<td>Alan</td>
+<td>1</td>
+<td>3</td>
+<td>lan</td>
+</tr>
+<tr>
+<td>Albert</td>
+<td>2</td>
+<td>4</td>
+<td>bert</td>
+</tr>
+</tbody></table>
+<p>这里使用的复活点间隔 <code>K=4</code>。使用该方案每个条目需要额外至少一个字节存储共享的长度 <code>shared</code>，但同时会节约 <code>shared</code> 个字节。上表中整体会节约 <code>2+2+1+2+1+2-8=2</code> 个字节。当需要读第八个键时，需要先读取前面最近的复活点 <code>Adelbert</code>，根据共享前缀恢复第六个键 <code>Ad + rian</code>，再恢复第七个键 <code>A + lan</code>，最后恢复 <code>Al + bert</code>。所以这里的 <code>K</code> 并不能取得过大。</p>
+<p><code>BlockBuilder::Finish</code> 时，会将所有的复活点位置及复活点数量写到 <code>buffer_</code> 里，以实现解析。对应的解析代码位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/table/block.cc"><code>table/block.cc</code></a>，后续文章会再分析。</p>
+<h3 id="3-Table-Builder"><a href="#3-Table-Builder" class="headerlink" title="3. Table Builder"></a>3. Table Builder</h3><p><code>TableBuilder</code> 的接口位于 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/include/leveldb/table_builder.h"><code>include/leveldb/table_builder.h</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// TableBuilder provides the interface used to build a Table</span></span><br><span class="line"><span class="comment">// (an immutable and sorted map from keys to values).</span></span><br><span class="line"><span class="comment">//</span></span><br><span class="line"><span class="comment">// Multiple threads can invoke const methods on a TableBuilder without</span></span><br><span class="line"><span class="comment">// external synchronization, but if any of the threads may call a</span></span><br><span class="line"><span class="comment">// non-const method, all threads accessing the same TableBuilder must use</span></span><br><span class="line"><span class="comment">// external synchronization.</span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">ifndef</span> STORAGE_LEVELDB_INCLUDE_TABLE_BUILDER_H_</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> STORAGE_LEVELDB_INCLUDE_TABLE_BUILDER_H_</span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&lt;stdint.h&gt;</span></span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/export.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/options.h&quot;</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">include</span> <span class="meta-string">&quot;leveldb/status.h&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">namespace</span> leveldb &#123;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">BlockBuilder</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">BlockHandle</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">WritableFile</span>;</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">LEVELDB_EXPORT</span> <span class="title">TableBuilder</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// Create a builder that will store the contents of the table it is</span></span><br><span class="line">  <span class="comment">// building in *file.  Does not close the file.  It is up to the</span></span><br><span class="line">  <span class="comment">// caller to close the file after calling Finish().</span></span><br><span class="line">  <span class="built_in">TableBuilder</span>(<span class="keyword">const</span> Options&amp; options, WritableFile* file);</span><br><span class="line"></span><br><span class="line">  <span class="built_in">TableBuilder</span>(<span class="keyword">const</span> TableBuilder&amp;) = <span class="keyword">delete</span>;</span><br><span class="line">  TableBuilder&amp; <span class="keyword">operator</span>=(<span class="keyword">const</span> TableBuilder&amp;) = <span class="keyword">delete</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// REQUIRES: Either Finish() or Abandon() has been called.</span></span><br><span class="line">  ~<span class="built_in">TableBuilder</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Change the options used by this builder.  Note: only some of the</span></span><br><span class="line">  <span class="comment">// option fields can be changed after construction.  If a field is</span></span><br><span class="line">  <span class="comment">// not allowed to change dynamically and its value in the structure</span></span><br><span class="line">  <span class="comment">// passed to the constructor is different from its value in the</span></span><br><span class="line">  <span class="comment">// structure passed to this method, this method will return an error</span></span><br><span class="line">  <span class="comment">// without changing any fields.</span></span><br><span class="line">  <span class="function">Status <span class="title">ChangeOptions</span><span class="params">(<span class="keyword">const</span> Options&amp; options)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Add key,value to the table being constructed.</span></span><br><span class="line">  <span class="comment">// REQUIRES: key is after any previously added key according to comparator.</span></span><br><span class="line">  <span class="comment">// REQUIRES: Finish(), Abandon() have not been called</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Add</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Advanced operation: flush any buffered key/value pairs to file.</span></span><br><span class="line">  <span class="comment">// Can be used to ensure that two adjacent entries never live in</span></span><br><span class="line">  <span class="comment">// the same data block.  Most clients should not need to use this method.</span></span><br><span class="line">  <span class="comment">// REQUIRES: Finish(), Abandon() have not been called</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Flush</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Return non-ok iff some error has been detected.</span></span><br><span class="line">  <span class="function">Status <span class="title">status</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Finish building the table.  Stops using the file passed to the</span></span><br><span class="line">  <span class="comment">// constructor after this function returns.</span></span><br><span class="line">  <span class="comment">// REQUIRES: Finish(), Abandon() have not been called</span></span><br><span class="line">  <span class="function">Status <span class="title">Finish</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Indicate that the contents of this builder should be abandoned.  Stops</span></span><br><span class="line">  <span class="comment">// using the file passed to the constructor after this function returns.</span></span><br><span class="line">  <span class="comment">// If the caller is not going to call Finish(), it must call Abandon()</span></span><br><span class="line">  <span class="comment">// before destroying this builder.</span></span><br><span class="line">  <span class="comment">// REQUIRES: Finish(), Abandon() have not been called</span></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">Abandon</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Number of calls to Add() so far.</span></span><br><span class="line">  <span class="function"><span class="keyword">uint64_t</span> <span class="title">NumEntries</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Size of the file generated so far.  If invoked after a successful</span></span><br><span class="line">  <span class="comment">// Finish() call, returns the size of the final generated file.</span></span><br><span class="line">  <span class="function"><span class="keyword">uint64_t</span> <span class="title">FileSize</span><span class="params">()</span> <span class="keyword">const</span></span>;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="function"><span class="keyword">bool</span> <span class="title">ok</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> <span class="built_in">status</span>().<span class="built_in">ok</span>(); &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">WriteBlock</span><span class="params">(BlockBuilder* block, BlockHandle* handle)</span></span>;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">WriteRawBlock</span><span class="params">(<span class="keyword">const</span> Slice&amp; data, CompressionType, BlockHandle* handle)</span></span>;</span><br><span class="line"></span><br><span class="line">  <span class="class"><span class="keyword">struct</span> <span class="title">Rep</span>;</span></span><br><span class="line">  Rep* rep_;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">&#125;  <span class="comment">// namespace leveldb</span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">endif</span>  <span class="comment">// STORAGE_LEVELDB_INCLUDE_TABLE_BUILDER_H_</span></span></span><br></pre></td></tr></table></figure>
+
+<p>接口代码里，LevelDB 都提供了详细的英文注释，不再赘述。这里刚好遇到 <code>pImpl</code> 范式，多说一点。对 C++ 来说，ABI 始终是一个痛点。Zero-Overhead 的 OOP，会把这部分 Overhead 加到编译期上。当一个类的数据成员发生变化时，会影响该类对象的大小和内存布局，进而导致所有依赖该类的文件需要重新编译。如果使用动态链接库，当版本升级、类发生变化时，由于 ABI 不兼容会导致无法直接替换动态链接库文件完成升级。而使用 <code>pImpl</code> 范式，将类的成员和类的声明隔离开，使用一个指针指向存储成员的对象 <code>rep_</code> 上。当成员发生变化时，也不需要重新编译，并且保证了 ABI 的稳定。该方案的缺点是访问成员时增加了一次指针寻址，不过瑕不掩瑜，和智能指针一样耗费微小的代价、带来极大的提升。LevelDB 的源代码中大量使用了该范式。接着看 <code>TableBuilder</code> 的实现 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/db/table_builder.cc"><code>table/table_builder.cc</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">TableBuilder</span>:</span>:Rep &#123;</span><br><span class="line">  <span class="built_in">Rep</span>(<span class="keyword">const</span> Options&amp; opt, WritableFile* f)</span><br><span class="line">      : <span class="built_in">options</span>(opt),</span><br><span class="line">        <span class="built_in">index_block_options</span>(opt),</span><br><span class="line">        <span class="built_in">file</span>(f),</span><br><span class="line">        <span class="built_in">offset</span>(<span class="number">0</span>),</span><br><span class="line">        <span class="built_in">data_block</span>(&amp;options),</span><br><span class="line">        <span class="built_in">index_block</span>(&amp;index_block_options),</span><br><span class="line">        <span class="built_in">num_entries</span>(<span class="number">0</span>),</span><br><span class="line">        <span class="built_in">closed</span>(<span class="literal">false</span>),</span><br><span class="line">        <span class="built_in">filter_block</span>(opt.filter_policy == <span class="literal">nullptr</span></span><br><span class="line">                         ? <span class="literal">nullptr</span></span><br><span class="line">                         : <span class="keyword">new</span> <span class="built_in">FilterBlockBuilder</span>(opt.filter_policy)),</span><br><span class="line">        <span class="built_in">pending_index_entry</span>(<span class="literal">false</span>) &#123;</span><br><span class="line">    index_block_options.block_restart_interval = <span class="number">1</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  Options options;</span><br><span class="line">  Options index_block_options;</span><br><span class="line">  WritableFile* file;</span><br><span class="line">  <span class="keyword">uint64_t</span> offset;</span><br><span class="line">  Status status;</span><br><span class="line">  BlockBuilder data_block;</span><br><span class="line">  BlockBuilder index_block;</span><br><span class="line">  std::string last_key;</span><br><span class="line">  <span class="keyword">int64_t</span> num_entries;</span><br><span class="line">  <span class="keyword">bool</span> closed;  <span class="comment">// Either Finish() or Abandon() has been called.</span></span><br><span class="line">  FilterBlockBuilder* filter_block;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// We do not emit the index entry for a block until we have seen the</span></span><br><span class="line">  <span class="comment">// first key for the next data block.  This allows us to use shorter</span></span><br><span class="line">  <span class="comment">// keys in the index block.  For example, consider a block boundary</span></span><br><span class="line">  <span class="comment">// between the keys &quot;the quick brown fox&quot; and &quot;the who&quot;.  We can use</span></span><br><span class="line">  <span class="comment">// &quot;the r&quot; as the key for the index block entry since it is &gt;= all</span></span><br><span class="line">  <span class="comment">// entries in the first block and &lt; all entries in subsequent</span></span><br><span class="line">  <span class="comment">// blocks.</span></span><br><span class="line">  <span class="comment">//</span></span><br><span class="line">  <span class="comment">// Invariant: r-&gt;pending_index_entry is true only if data_block is empty.</span></span><br><span class="line">  <span class="keyword">bool</span> pending_index_entry;</span><br><span class="line">  BlockHandle pending_handle;  <span class="comment">// Handle to add to index block</span></span><br><span class="line"></span><br><span class="line">  std::string compressed_output;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">TableBuilder::<span class="built_in">TableBuilder</span>(<span class="keyword">const</span> Options&amp; options, WritableFile* file)</span><br><span class="line">    : <span class="built_in">rep_</span>(<span class="keyword">new</span> <span class="built_in">Rep</span>(options, file)) &#123;</span><br><span class="line">  <span class="keyword">if</span> (rep_-&gt;filter_block != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    rep_-&gt;filter_block-&gt;<span class="built_in">StartBlock</span>(<span class="number">0</span>);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">TableBuilder::~<span class="built_in">TableBuilder</span>() &#123;</span><br><span class="line">  <span class="built_in">assert</span>(rep_-&gt;closed);  <span class="comment">// Catch errors where caller forgot to call Finish()</span></span><br><span class="line">  <span class="keyword">delete</span> rep_-&gt;filter_block;</span><br><span class="line">  <span class="keyword">delete</span> rep_;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">TableBuilder::status</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> rep_-&gt;status; &#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">uint64_t</span> <span class="title">TableBuilder::NumEntries</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> rep_-&gt;num_entries; &#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">uint64_t</span> <span class="title">TableBuilder::FileSize</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> rep_-&gt;offset; &#125;</span><br></pre></td></tr></table></figure>
+
+<p>首先是 <code>TableBuilder::Rep</code> 的定义。该定义位于 <code>.cc</code> 文件内，即使发生修改也仅仅会重新编译文件本身。<code>TableBuilder</code> 的构造函数中会初始化 <code>rep_</code> 对象，并且在析构函数中将 <code>rep_</code> 删除。而需要访问成员变量时，都需要使用 <code>rep_-&gt;</code> 进行多一次的寻址。</p>
+<p><code>TableBuilder::rep_</code> 包含两个 <code>BlockBuilder</code> 对象，分别用来存储键值对数据和元数据。接下来是 <code>TableBuilder::Add</code> 等函数的实现。由于依赖的原因，这里需要先看 <a target="_blank" rel="noopener" href="https://github.com/google/leveldb/blob/master/table/format.h"><code>table/format.h</code></a>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Block</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">RandomAccessFile</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">ReadOptions</span>;</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// BlockHandle is a pointer to the extent of a file that stores a data</span></span><br><span class="line"><span class="comment">// block or a meta block.</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">BlockHandle</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// Maximum encoding length of a BlockHandle</span></span><br><span class="line">  <span class="class"><span class="keyword">enum</span> &#123;</span> kMaxEncodedLength = <span class="number">10</span> + <span class="number">10</span> &#125;;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">BlockHandle</span>();</span><br><span class="line"></span><br><span class="line">  <span class="comment">// The offset of the block in the file.</span></span><br><span class="line">  <span class="function"><span class="keyword">uint64_t</span> <span class="title">offset</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> offset_; &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">set_offset</span><span class="params">(<span class="keyword">uint64_t</span> offset)</span> </span>&#123; offset_ = offset; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// The size of the stored block</span></span><br><span class="line">  <span class="function"><span class="keyword">uint64_t</span> <span class="title">size</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> size_; &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">set_size</span><span class="params">(<span class="keyword">uint64_t</span> size)</span> </span>&#123; size_ = size; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">EncodeTo</span><span class="params">(std::string* dst)</span> <span class="keyword">const</span></span>;</span><br><span class="line">  <span class="function">Status <span class="title">DecodeFrom</span><span class="params">(Slice* input)</span></span>;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  <span class="keyword">uint64_t</span> offset_;</span><br><span class="line">  <span class="keyword">uint64_t</span> size_;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Footer encapsulates the fixed information stored at the tail</span></span><br><span class="line"><span class="comment">// end of every table file.</span></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Footer</span> &#123;</span></span><br><span class="line"> <span class="keyword">public</span>:</span><br><span class="line">  <span class="comment">// Encoded length of a Footer.  Note that the serialization of a</span></span><br><span class="line">  <span class="comment">// Footer will always occupy exactly this many bytes.  It consists</span></span><br><span class="line">  <span class="comment">// of two block handles and a magic number.</span></span><br><span class="line">  <span class="class"><span class="keyword">enum</span> &#123;</span> kEncodedLength = <span class="number">2</span> * BlockHandle::kMaxEncodedLength + <span class="number">8</span> &#125;;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">Footer</span>() = <span class="keyword">default</span>;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// The block handle for the metaindex block of the table</span></span><br><span class="line">  <span class="function"><span class="keyword">const</span> BlockHandle&amp; <span class="title">metaindex_handle</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> metaindex_handle_; &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">set_metaindex_handle</span><span class="params">(<span class="keyword">const</span> BlockHandle&amp; h)</span> </span>&#123; metaindex_handle_ = h; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// The block handle for the index block of the table</span></span><br><span class="line">  <span class="function"><span class="keyword">const</span> BlockHandle&amp; <span class="title">index_handle</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; <span class="keyword">return</span> index_handle_; &#125;</span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">set_index_handle</span><span class="params">(<span class="keyword">const</span> BlockHandle&amp; h)</span> </span>&#123; index_handle_ = h; &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">void</span> <span class="title">EncodeTo</span><span class="params">(std::string* dst)</span> <span class="keyword">const</span></span>;</span><br><span class="line">  <span class="function">Status <span class="title">DecodeFrom</span><span class="params">(Slice* input)</span></span>;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">private</span>:</span><br><span class="line">  BlockHandle metaindex_handle_;</span><br><span class="line">  BlockHandle index_handle_;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// kTableMagicNumber was picked by running</span></span><br><span class="line"><span class="comment">//    echo http://code.google.com/p/leveldb/ | sha1sum</span></span><br><span class="line"><span class="comment">// and taking the leading 64 bits.</span></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">uint64_t</span> kTableMagicNumber = <span class="number">0xdb4775248b80fb57</span>ull;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 1-byte type + 32-bit crc</span></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">size_t</span> kBlockTrailerSize = <span class="number">5</span>;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">BlockContents</span> &#123;</span></span><br><span class="line">  Slice data;           <span class="comment">// Actual contents of data</span></span><br><span class="line">  <span class="keyword">bool</span> cachable;        <span class="comment">// True iff data can be cached</span></span><br><span class="line">  <span class="keyword">bool</span> heap_allocated;  <span class="comment">// True iff caller should delete[] data.data()</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Read the block identified by &quot;handle&quot; from &quot;file&quot;.  On failure</span></span><br><span class="line"><span class="comment">// return non-OK.  On success fill *result and return OK.</span></span><br><span class="line"><span class="function">Status <span class="title">ReadBlock</span><span class="params">(RandomAccessFile* file, <span class="keyword">const</span> ReadOptions&amp; options,</span></span></span><br><span class="line"><span class="params"><span class="function">                 <span class="keyword">const</span> BlockHandle&amp; handle, BlockContents* result)</span></span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// Implementation details follow.  Clients should ignore,</span></span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="title">BlockHandle::BlockHandle</span><span class="params">()</span></span></span><br><span class="line"><span class="function">    : offset_(~static_cast&lt;uint64_t&gt;(<span class="number">0</span>)), size_(~static_cast&lt;uint64_t&gt;(<span class="number">0</span>)) &#123;</span>&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>BlockBuilder</code> 将 Block 的数据写到字节流中，当需要进行解析时，必须知道其起始位置和长度，以便于读取复活点信息。故这里引入了 <code>BlockHandle</code>，存储 Block 数据所在的位置 <code>offset_</code> 和长度 <code>size_</code>。其 <code>EncodeTo</code> 和 <code>DecodeFrom</code> 函数的实现都非常简单，不再赘述。有了 <code>BlockHandle</code>，就可以读取对应的 <code>Block</code> 数据，<code>Footer</code> 就用来存储两个 <code>BlockHandle</code>。最后来看下 <code>TableBuilder</code> 的核心部分：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br><span class="line">128</span><br><span class="line">129</span><br><span class="line">130</span><br><span class="line">131</span><br><span class="line">132</span><br><span class="line">133</span><br><span class="line">134</span><br><span class="line">135</span><br><span class="line">136</span><br><span class="line">137</span><br><span class="line">138</span><br><span class="line">139</span><br><span class="line">140</span><br><span class="line">141</span><br><span class="line">142</span><br><span class="line">143</span><br><span class="line">144</span><br><span class="line">145</span><br><span class="line">146</span><br><span class="line">147</span><br><span class="line">148</span><br><span class="line">149</span><br><span class="line">150</span><br><span class="line">151</span><br><span class="line">152</span><br><span class="line">153</span><br><span class="line">154</span><br><span class="line">155</span><br><span class="line">156</span><br><span class="line">157</span><br><span class="line">158</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">TableBuilder::Add</span><span class="params">(<span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> </span>&#123;</span><br><span class="line">  Rep* r = rep_;</span><br><span class="line">  <span class="built_in">assert</span>(!r-&gt;closed);</span><br><span class="line">  <span class="keyword">if</span> (!<span class="built_in">ok</span>()) <span class="keyword">return</span>;</span><br><span class="line">  <span class="keyword">if</span> (r-&gt;num_entries &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="built_in">assert</span>(r-&gt;options.comparator-&gt;<span class="built_in">Compare</span>(key, <span class="built_in">Slice</span>(r-&gt;last_key)) &gt; <span class="number">0</span>);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (r-&gt;pending_index_entry) &#123;</span><br><span class="line">    <span class="built_in">assert</span>(r-&gt;data_block.<span class="built_in">empty</span>());</span><br><span class="line">    r-&gt;options.comparator-&gt;<span class="built_in">FindShortestSeparator</span>(&amp;r-&gt;last_key, key);</span><br><span class="line">    std::string handle_encoding;</span><br><span class="line">    r-&gt;pending_handle.<span class="built_in">EncodeTo</span>(&amp;handle_encoding);</span><br><span class="line">    r-&gt;index_block.<span class="built_in">Add</span>(r-&gt;last_key, <span class="built_in">Slice</span>(handle_encoding));</span><br><span class="line">    r-&gt;pending_index_entry = <span class="literal">false</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (r-&gt;filter_block != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    r-&gt;filter_block-&gt;<span class="built_in">AddKey</span>(key);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  r-&gt;last_key.<span class="built_in">assign</span>(key.<span class="built_in">data</span>(), key.<span class="built_in">size</span>());</span><br><span class="line">  r-&gt;num_entries++;</span><br><span class="line">  r-&gt;data_block.<span class="built_in">Add</span>(key, value);</span><br><span class="line"></span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">size_t</span> estimated_block_size = r-&gt;data_block.<span class="built_in">CurrentSizeEstimate</span>();</span><br><span class="line">  <span class="keyword">if</span> (estimated_block_size &gt;= r-&gt;options.block_size) &#123;</span><br><span class="line">    <span class="built_in">Flush</span>();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">TableBuilder::Flush</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  Rep* r = rep_;</span><br><span class="line">  <span class="built_in">assert</span>(!r-&gt;closed);</span><br><span class="line">  <span class="keyword">if</span> (!<span class="built_in">ok</span>()) <span class="keyword">return</span>;</span><br><span class="line">  <span class="keyword">if</span> (r-&gt;data_block.<span class="built_in">empty</span>()) <span class="keyword">return</span>;</span><br><span class="line">  <span class="built_in">assert</span>(!r-&gt;pending_index_entry);</span><br><span class="line">  <span class="built_in">WriteBlock</span>(&amp;r-&gt;data_block, &amp;r-&gt;pending_handle);</span><br><span class="line">  <span class="keyword">if</span> (<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    r-&gt;pending_index_entry = <span class="literal">true</span>;</span><br><span class="line">    r-&gt;status = r-&gt;file-&gt;<span class="built_in">Flush</span>();</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (r-&gt;filter_block != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    r-&gt;filter_block-&gt;<span class="built_in">StartBlock</span>(r-&gt;offset);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">TableBuilder::WriteBlock</span><span class="params">(BlockBuilder* block, BlockHandle* handle)</span> </span>&#123;</span><br><span class="line">  <span class="comment">// File format contains a sequence of blocks where each block has:</span></span><br><span class="line">  <span class="comment">//    block_data: uint8[n]</span></span><br><span class="line">  <span class="comment">//    type: uint8</span></span><br><span class="line">  <span class="comment">//    crc: uint32</span></span><br><span class="line">  <span class="built_in">assert</span>(<span class="built_in">ok</span>());</span><br><span class="line">  Rep* r = rep_;</span><br><span class="line">  Slice raw = block-&gt;<span class="built_in">Finish</span>();</span><br><span class="line"></span><br><span class="line">  Slice block_contents;</span><br><span class="line">  CompressionType type = r-&gt;options.compression;</span><br><span class="line">  <span class="comment">// TODO(postrelease): Support more compression options: zlib?</span></span><br><span class="line">  <span class="built_in"><span class="keyword">switch</span></span> (type) &#123;</span><br><span class="line">    <span class="keyword">case</span> kNoCompression:</span><br><span class="line">      block_contents = raw;</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">case</span> kSnappyCompression: &#123;</span><br><span class="line">      std::string* compressed = &amp;r-&gt;compressed_output;</span><br><span class="line">      <span class="keyword">if</span> (port::<span class="built_in">Snappy_Compress</span>(raw.<span class="built_in">data</span>(), raw.<span class="built_in">size</span>(), compressed) &amp;&amp;</span><br><span class="line">          compressed-&gt;<span class="built_in">size</span>() &lt; raw.<span class="built_in">size</span>() - (raw.<span class="built_in">size</span>() / <span class="number">8u</span>)) &#123;</span><br><span class="line">        block_contents = *compressed;</span><br><span class="line">      &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">// Snappy not supported, or compressed less than 12.5%, so just</span></span><br><span class="line">        <span class="comment">// store uncompressed form</span></span><br><span class="line">        block_contents = raw;</span><br><span class="line">        type = kNoCompression;</span><br><span class="line">      &#125;</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="built_in">WriteRawBlock</span>(block_contents, type, handle);</span><br><span class="line">  r-&gt;compressed_output.<span class="built_in">clear</span>();</span><br><span class="line">  block-&gt;<span class="built_in">Reset</span>();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">TableBuilder::WriteRawBlock</span><span class="params">(<span class="keyword">const</span> Slice&amp; block_contents,</span></span></span><br><span class="line"><span class="params"><span class="function">                                 CompressionType type, BlockHandle* handle)</span> </span>&#123;</span><br><span class="line">  Rep* r = rep_;</span><br><span class="line">  handle-&gt;<span class="built_in">set_offset</span>(r-&gt;offset);</span><br><span class="line">  handle-&gt;<span class="built_in">set_size</span>(block_contents.<span class="built_in">size</span>());</span><br><span class="line">  r-&gt;status = r-&gt;file-&gt;<span class="built_in">Append</span>(block_contents);</span><br><span class="line">  <span class="keyword">if</span> (r-&gt;status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="keyword">char</span> trailer[kBlockTrailerSize];</span><br><span class="line">    trailer[<span class="number">0</span>] = type;</span><br><span class="line">    <span class="keyword">uint32_t</span> crc = crc32c::<span class="built_in">Value</span>(block_contents.<span class="built_in">data</span>(), block_contents.<span class="built_in">size</span>());</span><br><span class="line">    crc = crc32c::<span class="built_in">Extend</span>(crc, trailer, <span class="number">1</span>);  <span class="comment">// Extend crc to cover block type</span></span><br><span class="line">    <span class="built_in">EncodeFixed32</span>(trailer + <span class="number">1</span>, crc32c::<span class="built_in">Mask</span>(crc));</span><br><span class="line">    r-&gt;status = r-&gt;file-&gt;<span class="built_in">Append</span>(<span class="built_in">Slice</span>(trailer, kBlockTrailerSize));</span><br><span class="line">    <span class="keyword">if</span> (r-&gt;status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      r-&gt;offset += block_contents.<span class="built_in">size</span>() + kBlockTrailerSize;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">Status <span class="title">TableBuilder::Finish</span><span class="params">()</span> </span>&#123;</span><br><span class="line">  Rep* r = rep_;</span><br><span class="line">  <span class="built_in">Flush</span>();</span><br><span class="line">  <span class="built_in">assert</span>(!r-&gt;closed);</span><br><span class="line">  r-&gt;closed = <span class="literal">true</span>;</span><br><span class="line"></span><br><span class="line">  BlockHandle filter_block_handle, metaindex_block_handle, index_block_handle;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Write filter block</span></span><br><span class="line">  <span class="keyword">if</span> (<span class="built_in">ok</span>() &amp;&amp; r-&gt;filter_block != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">    <span class="built_in">WriteRawBlock</span>(r-&gt;filter_block-&gt;<span class="built_in">Finish</span>(), kNoCompression,</span><br><span class="line">                  &amp;filter_block_handle);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Write metaindex block</span></span><br><span class="line">  <span class="keyword">if</span> (<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="function">BlockBuilder <span class="title">meta_index_block</span><span class="params">(&amp;r-&gt;options)</span></span>;</span><br><span class="line">    <span class="keyword">if</span> (r-&gt;filter_block != <span class="literal">nullptr</span>) &#123;</span><br><span class="line">      <span class="comment">// Add mapping from &quot;filter.Name&quot; to location of filter data</span></span><br><span class="line">      std::string key = <span class="string">&quot;filter.&quot;</span>;</span><br><span class="line">      key.<span class="built_in">append</span>(r-&gt;options.filter_policy-&gt;<span class="built_in">Name</span>());</span><br><span class="line">      std::string handle_encoding;</span><br><span class="line">      filter_block_handle.<span class="built_in">EncodeTo</span>(&amp;handle_encoding);</span><br><span class="line">      meta_index_block.<span class="built_in">Add</span>(key, handle_encoding);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// TODO(postrelease): Add stats and other meta blocks</span></span><br><span class="line">    <span class="built_in">WriteBlock</span>(&amp;meta_index_block, &amp;metaindex_block_handle);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Write index block</span></span><br><span class="line">  <span class="keyword">if</span> (<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    <span class="keyword">if</span> (r-&gt;pending_index_entry) &#123;</span><br><span class="line">      r-&gt;options.comparator-&gt;<span class="built_in">FindShortSuccessor</span>(&amp;r-&gt;last_key);</span><br><span class="line">      std::string handle_encoding;</span><br><span class="line">      r-&gt;pending_handle.<span class="built_in">EncodeTo</span>(&amp;handle_encoding);</span><br><span class="line">      r-&gt;index_block.<span class="built_in">Add</span>(r-&gt;last_key, <span class="built_in">Slice</span>(handle_encoding));</span><br><span class="line">      r-&gt;pending_index_entry = <span class="literal">false</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="built_in">WriteBlock</span>(&amp;r-&gt;index_block, &amp;index_block_handle);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="comment">// Write footer</span></span><br><span class="line">  <span class="keyword">if</span> (<span class="built_in">ok</span>()) &#123;</span><br><span class="line">    Footer footer;</span><br><span class="line">    footer.<span class="built_in">set_metaindex_handle</span>(metaindex_block_handle);</span><br><span class="line">    footer.<span class="built_in">set_index_handle</span>(index_block_handle);</span><br><span class="line">    std::string footer_encoding;</span><br><span class="line">    footer.<span class="built_in">EncodeTo</span>(&amp;footer_encoding);</span><br><span class="line">    r-&gt;status = r-&gt;file-&gt;<span class="built_in">Append</span>(footer_encoding);</span><br><span class="line">    <span class="keyword">if</span> (r-&gt;status.<span class="built_in">ok</span>()) &#123;</span><br><span class="line">      r-&gt;offset += footer_encoding.<span class="built_in">size</span>();</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> r-&gt;status;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>每次执行 <code>Add</code> 操作时，会将键值对写入 <code>data_block_</code> 中；当 <code>data_block_</code> 的大小超过阈值时（默认 4KB），将会把该 Block 写入文件，并将 Block 的 <code>last_key</code> 作为 <code>Key</code>，将 <code>offset</code> 和 <code>size</code> 信息作为 <code>Value</code> 加入到 <code>index_block_</code> 中。当执行 <code>TableBuilder::Finish</code> 操作时，会将 <code>index_block_</code> 也写入文件，其对应的 <code>index_block_handle_</code> 写到最后的 <code>Footer</code> 里。这样就完成了 Sorted Table 文件的构建。</p>
+<p>反推回来，当需要读取一个 Sorted Table 文件时，首先读取文件末尾的 Footer，根据存储的 Index Block Handle 可以读取到每个 Data Block 对应的 Data Block Handler 信息，进而读取到对应的 Data Block。读取的详细过程将在下一篇博文中分析。</p>
+<h3 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h3><p><code>TableBuilder</code> 建好 Sorted Table 后，存储为后缀 <code>.ldb</code> 的物理文件，并且将其加入版本管理中。Sorted Table 建好后是不可修改的，进而可以很好地支持并发访问，并且对缓存友好。</p>
+<p>题外话：Sorted Table 本来存储的文件文件格式是 <code>.sst</code>，但后来由于 <a target="_blank" rel="noopener" href="https://groups.google.com/forum/#!topic/leveldb/u9izbG-pDis">Windows 系统的原因</a>，LevelDB 将后缀改为 <code>.ldb</code>，不过仍然保持着对 <code>.sst</code> 的兼容。</p>
+<p>关于PImpl机制与C++ ABI的内容可见：</p>
+<p>1.<a target="_blank" rel="noopener" href="https://blog.csdn.net/sesiria/article/details/51555811">PImpl机制</a></p>
+<p>2.<a target="_blank" rel="noopener" href="https://blog.csdn.net/absurd/article/details/930158">C++ ABI</a></p>
+ 
+      <!-- reward -->
+      
+    </div>
+    
+
+    <!-- copyright -->
+    
+    <div class="declare">
+      <ul class="post-copyright">
+        <li>
+          <i class="ri-copyright-line"></i>
+          <strong>Copyright： </strong>
+          
+          Copyright is owned by the author. For commercial reprints, please contact the author for authorization. For non-commercial reprints, please indicate the source.
+          
+        </li>
+      </ul>
+    </div>
+    
+    <footer class="article-footer">
+       
+<div class="share-btn">
+      <span class="share-sns share-outer">
+        <i class="ri-share-forward-line"></i>
+        分享
+      </span>
+      <div class="share-wrap">
+        <i class="arrow"></i>
+        <div class="share-icons">
+          
+          <a class="weibo share-sns" href="javascript:;" data-type="weibo">
+            <i class="ri-weibo-fill"></i>
+          </a>
+          <a class="weixin share-sns wxFab" href="javascript:;" data-type="weixin">
+            <i class="ri-wechat-fill"></i>
+          </a>
+          <a class="qq share-sns" href="javascript:;" data-type="qq">
+            <i class="ri-qq-fill"></i>
+          </a>
+          <a class="douban share-sns" href="javascript:;" data-type="douban">
+            <i class="ri-douban-line"></i>
+          </a>
+          <!-- <a class="qzone share-sns" href="javascript:;" data-type="qzone">
+            <i class="icon icon-qzone"></i>
+          </a> -->
+          
+          <a class="facebook share-sns" href="javascript:;" data-type="facebook">
+            <i class="ri-facebook-circle-fill"></i>
+          </a>
+          <a class="twitter share-sns" href="javascript:;" data-type="twitter">
+            <i class="ri-twitter-fill"></i>
+          </a>
+          <a class="google share-sns" href="javascript:;" data-type="google">
+            <i class="ri-google-fill"></i>
+          </a>
+        </div>
+      </div>
+</div>
+
+<div class="wx-share-modal">
+    <a class="modal-close" href="javascript:;"><i class="ri-close-circle-line"></i></a>
+    <p>扫一扫，分享到微信</p>
+    <div class="wx-qrcode">
+      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%946.Sorted%20String%20Table/" alt="微信分享二维码">
+    </div>
+</div>
+
+<div id="share-mask"></div>  
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LevelDB/" rel="tag">LevelDB</a></li></ul>
+
+    </footer>
+  </div>
+
+   
+  <nav class="article-nav">
+    
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%947.Sorted%20String%20Table%E7%BB%AD/" class="article-nav-link">
+        <strong class="article-nav-caption">上一篇</strong>
+        <div class="article-nav-title">
+          
+            LevelDB源码分析——7.Sorted String Table续
+          
+        </div>
+      </a>
+    
+    
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%945.%E4%B8%8D%E5%90%8C%E7%9A%84%E4%B8%BB%E9%94%AEKey%E7%B1%BB%E5%9E%8B/" class="article-nav-link">
+        <strong class="article-nav-caption">下一篇</strong>
+        <div class="article-nav-title">LevelDB源码分析——5.不同的主键Key类型</div>
+      </a>
+    
+  </nav>
+
+   
+<!-- valine评论 -->
+<div id="vcomments-box">
+  <div id="vcomments"></div>
+</div>
+<script src="//cdn1.lncld.net/static/js/3.0.4/av-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/valine@1.4.14/dist/Valine.min.js"></script>
+<script>
+  new Valine({
+    el: "#vcomments",
+    app_id: "NSGUA2zFQlabQAWLXHM8G89r-MdYXbMMI",
+    app_key: "dxEn5Cz3tIz4zHFNpVdfQWgB",
+    path: window.location.pathname,
+    avatar: "monsterid",
+    placeholder: "给我的文章加点评论吧~",
+    recordIP: true,
+  });
+  const infoEle = document.querySelector("#vcomments .info");
+  if (infoEle && infoEle.childNodes && infoEle.childNodes.length > 0) {
+    infoEle.childNodes.forEach(function (item) {
+      item.parentNode.removeChild(item);
+    });
+  }
+</script>
+<style>
+  #vcomments-box {
+    padding: 5px 30px;
+  }
+
+  @media screen and (max-width: 800px) {
+    #vcomments-box {
+      padding: 5px 0px;
+    }
+  }
+
+  #vcomments-box #vcomments {
+    background-color: #fff;
+  }
+
+  .v .vlist .vcard .vh {
+    padding-right: 20px;
+  }
+
+  .v .vlist .vcard {
+    padding-left: 10px;
+  }
+</style>
+
+ 
+   
+     
+</article>
+
+</section>
+      <footer class="footer">
+  <div class="outer">
+    <ul>
+      <li>
+        Copyrights &copy;
+        2021-2022
+        <i class="ri-heart-fill heart_icon"></i> Xufei Pan
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        
+        Powered by <a href="https://hexo.io" target="_blank">Hexo</a>
+        <span class="division">|</span>
+        Theme - <a href="https://github.com/Shen-Yu/hexo-theme-ayer" target="_blank">Ayer</a>
+        
+      </li>
+    </ul>
+    <ul>
+      <li>
+        
+        
+        <span>
+  <span><i class="ri-user-3-fill"></i>Visitors:<span id="busuanzi_value_site_uv"></span></span>
+  <span class="division">|</span>
+  <span><i class="ri-eye-fill"></i>Views:<span id="busuanzi_value_page_pv"></span></span>
+</span>
+        
+      </li>
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      
+    </ul>
+    <ul>
+      <li>
+        <!-- cnzz统计 -->
+        
+        <script type="text/javascript" src='https://v1.cnzz.com/z_stat.php?id=1280023895&amp;web_id=1280023895'></script>
+        
+      </li>
+    </ul>
+  </div>
+</footer>
+      <div class="float_btns">
+        <div class="totop" id="totop">
+  <i class="ri-arrow-up-line"></i>
+</div>
+
+<div class="todark" id="todark">
+  <i class="ri-moon-line"></i>
+</div>
+
+      </div>
+    </main>
+    <aside class="sidebar on">
+      <button class="navbar-toggle"></button>
+<nav class="navbar">
+  
+  <div class="logo">
+    <a href="/"><img src="/images/ayer-side.svg" alt="Gasol"></a>
+  </div>
+  
+  <ul class="nav nav-main">
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/">主页</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/archives">目录</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/categories">分类</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags">标签</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/tags/photos/">图片</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/friends">友链</a>
+    </li>
+    
+    <li class="nav-item">
+      <a class="nav-item-link" href="/2021/about">关于我</a>
+    </li>
+    
+  </ul>
+</nav>
+<nav class="navbar navbar-bottom">
+  <ul class="nav">
+    <li class="nav-item">
+      
+      <a class="nav-item-link nav-item-search"  title="Search">
+        <i class="ri-search-line"></i>
+      </a>
+      
+      
+      <a class="nav-item-link" target="_blank" href="/atom.xml" title="RSS Feed">
+        <i class="ri-rss-line"></i>
+      </a>
+      
+    </li>
+  </ul>
+</nav>
+<div class="search-form-wrap">
+  <div class="local-search local-search-plugin">
+  <input type="search" id="local-search-input" class="local-search-input" placeholder="Search...">
+  <div id="local-search-result" class="local-search-result"></div>
+</div>
+</div>
+    </aside>
+    <div id="mask"></div>
+
+<!-- #reward -->
+<div id="reward">
+  <span class="close"><i class="ri-close-line"></i></span>
+  <p class="reward-p"><i class="ri-cup-line"></i>请我喝杯奶茶吧~</p>
+  <div class="reward-box">
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/alipay.jpg">
+      <span class="reward-type">支付宝</span>
+    </div>
+    
+    
+    <div class="reward-item">
+      <img class="reward-img" src="/images/wechat.jpg">
+      <span class="reward-type">微信</span>
+    </div>
+    
+  </div>
+</div>
+    
+<script src="/js/jquery-2.0.3.min.js"></script>
+ 
+<script src="/js/lazyload.min.js"></script>
+
+<!-- Tocbot -->
+ 
+<script src="/js/tocbot.min.js"></script>
+
+<script>
+  tocbot.init({
+    tocSelector: ".tocbot",
+    contentSelector: ".article-entry",
+    headingSelector: "h1, h2, h3, h4, h5, h6",
+    hasInnerContainers: true,
+    scrollSmooth: true,
+    scrollContainer: "main",
+    positionFixedSelector: ".tocbot",
+    positionFixedClass: "is-position-fixed",
+    fixedSidebarOffset: "auto",
+  });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.js"></script>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/jquery-modal@0.9.2/jquery.modal.min.css"
+/>
+<script src="https://cdn.jsdelivr.net/npm/justifiedGallery@3.7.0/dist/js/jquery.justifiedGallery.min.js"></script>
+
+<script src="/dist/main.js"></script>
+
+<!-- ImageViewer -->
+ <!-- Root element of PhotoSwipe. Must have class pswp. -->
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+    <!-- Background of PhotoSwipe. 
+         It's a separate element as animating opacity is faster than rgba(). -->
+    <div class="pswp__bg"></div>
+
+    <!-- Slides wrapper with overflow:hidden. -->
+    <div class="pswp__scroll-wrap">
+
+        <!-- Container that holds slides. 
+            PhotoSwipe keeps only 3 of them in the DOM to save memory.
+            Don't modify these 3 pswp__item elements, data is added later on. -->
+        <div class="pswp__container">
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+            <div class="pswp__item"></div>
+        </div>
+
+        <!-- Default (PhotoSwipeUI_Default) interface on top of sliding area. Can be changed. -->
+        <div class="pswp__ui pswp__ui--hidden">
+
+            <div class="pswp__top-bar">
+
+                <!--  Controls are self-explanatory. Order can be changed. -->
+
+                <div class="pswp__counter"></div>
+
+                <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+
+                <button class="pswp__button pswp__button--share" style="display:none" title="Share"></button>
+
+                <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+
+                <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+
+                <!-- Preloader demo http://codepen.io/dimsemenov/pen/yyBWoR -->
+                <!-- element will get class pswp__preloader--active when preloader is running -->
+                <div class="pswp__preloader">
+                    <div class="pswp__preloader__icn">
+                        <div class="pswp__preloader__cut">
+                            <div class="pswp__preloader__donut"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+                <div class="pswp__share-tooltip"></div>
+            </div>
+
+            <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+            </button>
+
+            <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+            </button>
+
+            <div class="pswp__caption">
+                <div class="pswp__caption__center"></div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/default-skin/default-skin.min.css">
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/photoswipe@4.1.3/dist/photoswipe-ui-default.min.js"></script>
+
+<script>
+    function viewer_init() {
+        let pswpElement = document.querySelectorAll('.pswp')[0];
+        let $imgArr = document.querySelectorAll(('.article-entry img:not(.reward-img)'))
+
+        $imgArr.forEach(($em, i) => {
+            $em.onclick = () => {
+                // slider展开状态
+                // todo: 这样不好，后面改成状态
+                if (document.querySelector('.left-col.show')) return
+                let items = []
+                $imgArr.forEach(($em2, i2) => {
+                    let img = $em2.getAttribute('data-idx', i2)
+                    let src = $em2.getAttribute('data-target') || $em2.getAttribute('src')
+                    let title = $em2.getAttribute('alt')
+                    // 获得原图尺寸
+                    const image = new Image()
+                    image.src = src
+                    items.push({
+                        src: src,
+                        w: image.width || $em2.width,
+                        h: image.height || $em2.height,
+                        title: title
+                    })
+                })
+                var gallery = new PhotoSwipe(pswpElement, PhotoSwipeUI_Default, items, {
+                    index: parseInt(i)
+                });
+                gallery.init()
+            }
+        })
+    }
+    viewer_init()
+</script> 
+<!-- MathJax -->
+
+<!-- Katex -->
+
+<!-- busuanzi  -->
+ 
+<script src="/js/busuanzi-2.3.pure.min.js"></script>
+ 
+<!-- ClickLove -->
+ 
+<script src="/js/clickLove.js"></script>
+ 
+<!-- ClickBoom1 -->
+
+<!-- ClickBoom2 -->
+
+<!-- CodeCopy -->
+ 
+<link rel="stylesheet" href="/css/clipboard.css">
+ <script src="https://cdn.jsdelivr.net/npm/clipboard@2/dist/clipboard.min.js"></script>
+<script>
+  function wait(callback, seconds) {
+    var timelag = null;
+    timelag = window.setTimeout(callback, seconds);
+  }
+  !function (e, t, a) {
+    var initCopyCode = function(){
+      var copyHtml = '';
+      copyHtml += '<button class="btn-copy" data-clipboard-snippet="">';
+      copyHtml += '<i class="ri-file-copy-2-line"></i><span>COPY</span>';
+      copyHtml += '</button>';
+      $(".highlight .code pre").before(copyHtml);
+      $(".article pre code").before(copyHtml);
+      var clipboard = new ClipboardJS('.btn-copy', {
+        target: function(trigger) {
+          return trigger.nextElementSibling;
+        }
+      });
+      clipboard.on('success', function(e) {
+        let $btn = $(e.trigger);
+        $btn.addClass('copied');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-checkbox-circle-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPIED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-checkbox-circle-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+      clipboard.on('error', function(e) {
+        e.clearSelection();
+        let $btn = $(e.trigger);
+        $btn.addClass('copy-failed');
+        let $icon = $($btn.find('i'));
+        $icon.removeClass('ri-file-copy-2-line');
+        $icon.addClass('ri-time-line');
+        let $span = $($btn.find('span'));
+        $span[0].innerText = 'COPY FAILED';
+        
+        wait(function () { // 等待两秒钟后恢复
+          $icon.removeClass('ri-time-line');
+          $icon.addClass('ri-file-copy-2-line');
+          $span[0].innerText = 'COPY';
+        }, 2000);
+      });
+    }
+    initCopyCode();
+  }(window, document);
+</script>
+ 
+<!-- CanvasBackground -->
+ 
+<script src="/js/dz.js"></script>
+ 
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({ theme: "forest" });
+  }
+</script>
+
+
+    
+  </div>
+</body>
+
+</html>

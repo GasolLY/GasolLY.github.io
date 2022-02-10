@@ -11,7 +11,7 @@
         name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1"
       />
-      <title>Virtual OCSSD 环境搭建 |  Gasol</title>
+      <title>LevelDB源码分析——5.不同的主键Key类型 |  Gasol</title>
   <meta name="generator" content="hexo-theme-ayer">
       
       <link rel="shortcut icon" href="/favicon.ico" />
@@ -44,7 +44,7 @@
     <main class="content on">
       <section class="outer">
   <article
-  id="post-Virtual-OCSSD-环境搭建"
+  id="post-LevelDB源码分析——5.不同的主键Key类型"
   class="article article-type-post"
   itemscope
   itemprop="blogPost"
@@ -55,7 +55,7 @@
     <header class="article-header">
        
 <h1 class="article-title sea-center" style="border-left:0" itemprop="name">
-  Virtual OCSSD 环境搭建
+  LevelDB源码分析——5.不同的主键Key类型
 </h1>
  
 
@@ -63,11 +63,11 @@
     </header>
      
     <div class="article-meta">
-      <a href="/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/" class="article-date">
-  <time datetime="2021-06-17T15:54:01.000Z" itemprop="datePublished">2021-06-17</time>
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%945.%E4%B8%8D%E5%90%8C%E7%9A%84%E4%B8%BB%E9%94%AEKey%E7%B1%BB%E5%9E%8B/" class="article-date">
+  <time datetime="2022-02-10T02:30:30.000Z" itemprop="datePublished">2022-02-10</time>
 </a> 
   <div class="article-category">
-    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/QEMU/">QEMU</a>
+    <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/">学习</a> / <a class="article-category-link" href="/categories/%E5%AD%A6%E4%B9%A0/LevelDB/">LevelDB</a>
   </div>
   
 <div class="word_count">
@@ -75,7 +75,7 @@
         <span class="post-meta-item-icon">
             <i class="ri-quill-pen-line"></i>
             <span class="post-meta-item-text"> Word count:</span>
-            <span class="post-count">767</span>
+            <span class="post-count">707</span>
         </span>
     </span>
 
@@ -99,56 +99,49 @@
   
     <div class="article-entry" itemprop="articleBody">
        
-  <h2 id="一、Virtual-OpenChannel-SSD-环境配置"><a href="#一、Virtual-OpenChannel-SSD-环境配置" class="headerlink" title="一、Virtual OpenChannel SSD 环境配置"></a>一、Virtual OpenChannel SSD 环境配置</h2><p>1.下载Qemu-nvme的源码</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">git <span class="built_in">clone</span> https://github.com/OpenChannelSSD/qemu-nvme</span><br></pre></td></tr></table></figure>
+  <h2 id="五-不同的主键Key类型"><a href="#五-不同的主键Key类型" class="headerlink" title="五.不同的主键Key类型"></a>五.不同的主键Key类型</h2><p>本系列的前两篇介绍了LevelDB高性能写操作的核心：日志与内存数据库。</p>
+<p>在阅读LevelDB的源码时，往往能看到这样的参数传递：<code>Slice key</code> ,<code>const char* key</code>,<code>Key key</code>等等</p>
+<p>他们都有相同的参数名，但有时代表的key却不一定相同。</p>
+<p>在skiplist.h中, 能看到</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">void Insert(const Key&amp; key); </span><br></pre></td></tr></table></figure>
 
-<p>2.进入qemu-nvme目录下，运行配置脚本，make编译</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">cd</span> qemu-nvme</span><br><span class="line">./configure --target-list=x86_64-softmmu --prefix=<span class="variable">$HOME</span>/qemu-nvme</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-<p>3.在完成上述步骤后，开始正式配置环境。首先，在物理机上创建一个ocssd格式的文件，例如ocssd.img。</p>
-<blockquote>
-<p>（若提示ocssd参数无效等报错，可能是因为实际使用的是物理机内置的qemu-img，而不是qemu-nvme make编译后生成的qemu-img。将下列命令的qemu-img更改为qemu-nvme/qemu-img代替即可。）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">qemu-img create -f ocssd -o num_grp=2,num_pu=4,num_chk=60 ocssd.img</span><br></pre></td></tr></table></figure>
+<p>在memtable.h中，能看到</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">void Add(SequenceNumber seq,ValueType type, const Slice&amp; key, const Slice&amp; value); </span><br></pre></td></tr></table></figure>
 
-<p>4.创建一个文件，作为模拟的磁盘，用来安装linux系统。</p>
-<blockquote>
-<p>（在物理机上运行qemu虚拟机，虚拟机内加载模拟磁盘的文件与模拟ocssd的文件。最终的实验环境是在qemu虚拟机内部的linux子系统上运行。）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo qemu-img create -f raw /home/gasol/qemu-nvme/ubuntu40.raw 40G</span><br></pre></td></tr></table></figure>
+<p>在block_builder.h中，能看到</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">void Add(const Slice&amp; key,const Slice&amp; value); </span><br></pre></td></tr></table></figure>
 
-<p>5.下载ubuntu镜像，并在第4步建立的模拟磁盘的文件中，安装ubuntu系统。</p>
-<blockquote>
-<p>（此时可能会提示qemu-system-x86_64: warning: host doesn’t support requested feature: CPUID.80000001H:ECX.svm [bit 2]。这是正常的，忽略即可。正常情况下，在输出提示信息后，会弹出新的安装窗口，点击安装即可）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo qemu-system-x86_64 -cdrom /home/polarsparc/ubuntu-18.04.1-desktop-amd64.iso -drive format=raw,file=/home/polarsparc/Downloads/VMs/vm-disk-1.raw -enable-kvm -m 2G -name vm-ubuntu-1</span><br></pre></td></tr></table></figure>
+<p>在table_builder.h中，能看到</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">void Add(const Slice&amp; key,const Slice&amp; value); </span><br></pre></td></tr></table></figure>
 
-<p>6.在物理机系统上，挂载ocssd,并启动虚拟机。</p>
-<blockquote>
-<p>(注意：使用路径qemu-nvme/bin/下的qemu-system-x86_64运行，而不是采用系统内置的qemu-system-x86_64 )</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo ./bin/qemu-system-x86_64 -m 8G -enable-kvm ubuntu40.raw -blockdev ocssd,node-name=nvme01,file.driver=file,file.filename=ocssd.img -device nvme,drive=nvme01,serial=deadbeef,id=lnvm -cpu host</span><br></pre></td></tr></table></figure>
+<p>实际上，LevelDB中一共有五种key的概念，分别是UserKey、InternalKey、ParsedInternalKey、LookupKey、MemtableKey。</p>
+<p>其中用户输入的key即为UserKey，在各个函数的传递过程中，经过各种各样的处理，很难弄清楚现在拿到的key是什么。通过梳理sstable的插入和查询过程中，key的变化过程，分析清楚各种key的作用。</p>
+<p><img src="https://l1nfp.github.io/assets/img/posts/LevelDB5keys.png" alt="LevelDB5keys.png"></p>
+<h3 id="UserKey"><a href="#UserKey" class="headerlink" title="UserKey"></a>UserKey</h3><p>从最简单的入手，我们先弄清楚UserKey</p>
+<p>前面已经提到过用户输入的key即为UserKey，例如，用户输入k/v对，key1:value1 ,则key1即为UserKey ，在leveldb中，是以Slice类型传入</p>
+<p>Slice user_key;</p>
+<h3 id="InternalKey"><a href="#InternalKey" class="headerlink" title="InternalKey"></a>InternalKey</h3><p>InternalKey是将user_key按一定规则编码后得到的字符串</p>
+<ul>
+<li>Seq用于表示记录插入的顺序</li>
+<li>Type用于表示记录的类型，目前取值只有两种kTypeDeletion表示记录被删除，kTypeValue表示记录有效</li>
+</ul>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">enum</span> <span class="title">ValueType</span> &#123;</span> kTypeDeletion = <span class="number">0x0</span>, kTypeValue = <span class="number">0x1</span> &#125;; </span><br></pre></td></tr></table></figure>
 
-<p>7.在第6步虚拟机启动的情况下，利用VNC viewer连接，弹出窗口显示虚拟机运行情况。</p>
-<blockquote>
-<p>（若提示无vncviewer，安装对应包即可）（命令中连接的IP和端口与第6步的提示IP和端口相同）</p>
-</blockquote>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">vncviewer 127.0.0.1:5900</span><br></pre></td></tr></table></figure>
+<p>Seq占7B，Type占1B通过下面的函数打包</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">uint64_t</span> <span class="title">PackSequenceAndType</span><span class="params">(<span class="keyword">uint64_t</span> seq, ValueType t)</span> </span>&#123;    </span><br><span class="line">	<span class="built_in">assert</span>(seq &lt;= kMaxSequenceNumber);    </span><br><span class="line">	<span class="built_in">assert</span>(t &lt;= kValueTypeForSeek);    </span><br><span class="line">	<span class="keyword">return</span> (seq &lt;&lt; <span class="number">8</span>) | t; </span><br><span class="line">	&#125; </span><br></pre></td></tr></table></figure>
 
-<p>8.在虚拟机启动后，可以通过运行以下命令，查看是否成功挂载ocssd设备。</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo nvme lnvm list</span><br></pre></td></tr></table></figure>
+<p>打包后拼接到user_key_bytes后面即构成了InternalKey</p>
+<h3 id="ParsedInternalKey"><a href="#ParsedInternalKey" class="headerlink" title="ParsedInternalKey"></a>ParsedInternalKey</h3><p>ParsedInternalKey将字符串InternalKey解析为一个结构体</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">ParsedInternalKey</span> &#123;</span>    </span><br><span class="line">	Slice user_key;    </span><br><span class="line">	SequenceNumber sequence&#123;&#125;;    </span><br><span class="line">	ValueType type;     </span><br><span class="line">	<span class="built_in">ParsedInternalKey</span>() = <span class="keyword">default</span>;  <span class="comment">// Intentionally left uninitialized (for speed)    </span></span><br><span class="line"></span><br><span class="line"><span class="built_in">ParsedInternalKey</span>(<span class="keyword">const</span> Slice&amp; u, <span class="keyword">const</span> SequenceNumber&amp; seq, ValueType t)  : <span class="built_in">user_key</span>(u), <span class="built_in">sequence</span>(seq), <span class="built_in">type</span>(t) &#123;&#125; &#125;; </span><br></pre></td></tr></table></figure>
 
-<h2 id="二、SPDK安装配置"><a href="#二、SPDK安装配置" class="headerlink" title="二、SPDK安装配置"></a>二、SPDK安装配置</h2><p>0.参考文档：<a target="_blank" rel="noopener" href="https://spdk.io/doc/getting_started.html">https://spdk.io/doc/getting_started.html</a></p>
-<p>1.按参考文档Getting started部分运行，即可编译安装SPDK，并可以通过运行<code>build/examples/identify</code>脚本列出系统上有效的NVME设备。</p>
-<blockquote>
-<p>（通过该脚本可以验证SPDK是否成功识别挂载的虚拟OCSSD）</p>
-</blockquote>
-<h2 id="三、关于可能遇到的git-clone与git-submodule速度过慢问题的解决方案"><a href="#三、关于可能遇到的git-clone与git-submodule速度过慢问题的解决方案" class="headerlink" title="三、关于可能遇到的git clone与git submodule速度过慢问题的解决方案"></a>三、关于可能遇到的git clone与git submodule速度过慢问题的解决方案</h2><p>0.参考文档：<a target="_blank" rel="noopener" href="https://www.cnblogs.com/zhuchengchao/p/12076153.html">https://www.cnblogs.com/zhuchengchao/p/12076153.html</a></p>
-<p>1.按照文档中的介绍，通过国内的gitee.com网站进行git clone，可以大幅度提升git clone的速率。</p>
-<p>2.对于git submodule速度过慢的问题:</p>
-<blockquote>
-<p>例如在git clone spdk的代码后，若需要git submodule，只需打开spdk/.gitmodules，将其中需要下载的库通过gitee.com下载到本地，并修改.gitmodules内部的路径即可。</p>
-</blockquote>
+<p>补上了ParsedInternalKey的概念后，就能看懂InternalKey的所有代码了</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">AppendInternalKey</span><span class="params">(std::string *result, <span class="keyword">const</span> ParsedInternalKey &amp;key)</span> </span>&#123;    </span><br><span class="line">	result-&gt;<span class="built_in">append</span>(key.user_key.<span class="built_in">data</span>(), key.user_key.<span class="built_in">size</span>());    </span><br><span class="line">	<span class="built_in">PutFixed64</span>(result, <span class="built_in">PackSequenceAndType</span>(key.sequence, key.type)); </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">InternalKey</span> &#123;</span> </span><br><span class="line">	<span class="keyword">private</span>:    </span><br><span class="line">		std::string rep_; </span><br><span class="line">	<span class="keyword">public</span>:    </span><br><span class="line">		<span class="built_in">InternalKey</span>() = <span class="keyword">default</span>;  <span class="comment">// Leave rep_ as empty to indicate it is invalid    </span></span><br><span class="line">		<span class="built_in">InternalKey</span>(<span class="keyword">const</span> Slice&amp; user_key, SequenceNumber s, ValueType t) &#123;        </span><br><span class="line">			<span class="built_in">AppendInternalKey</span>(&amp;rep_, <span class="built_in">ParsedInternalKey</span>(user_key, s, t));    </span><br><span class="line">		&#125;     </span><br><span class="line">		<span class="function"><span class="keyword">bool</span> <span class="title">DecodeFrom</span><span class="params">(<span class="keyword">const</span> Slice&amp; s)</span> </span>&#123;        </span><br><span class="line">			rep_.<span class="built_in">assign</span>(s.<span class="built_in">data</span>(), s.<span class="built_in">size</span>());        </span><br><span class="line">			<span class="keyword">return</span> !rep_.<span class="built_in">empty</span>();    </span><br><span class="line">		&#125;     </span><br><span class="line">		<span class="function">Slice <span class="title">Encode</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123;        </span><br><span class="line">			<span class="built_in">assert</span>(!rep_.<span class="built_in">empty</span>());        </span><br><span class="line">			<span class="keyword">return</span> rep_;    </span><br><span class="line">		&#125;     </span><br><span class="line">		<span class="function">Slice <span class="title">user_key</span><span class="params">()</span> <span class="keyword">const</span> </span>&#123; </span><br><span class="line">			<span class="keyword">return</span> <span class="built_in">ExtractUserKey</span>(rep_); </span><br><span class="line">		&#125;     </span><br><span class="line">		<span class="function"><span class="keyword">void</span> <span class="title">SetFrom</span><span class="params">(<span class="keyword">const</span> ParsedInternalKey&amp; p)</span> </span>&#123;        </span><br><span class="line">			rep_.<span class="built_in">clear</span>();        </span><br><span class="line">			<span class="built_in">AppendInternalKey</span>(&amp;rep_, p);    </span><br><span class="line">		&#125;    </span><br><span class="line">		<span class="function"><span class="keyword">void</span> <span class="title">Clear</span><span class="params">()</span> </span>&#123; rep_.<span class="built_in">clear</span>(); &#125; &#125;; </span><br></pre></td></tr></table></figure>
+
+<h3 id="LookupKey-amp-amp-MemtableKey"><a href="#LookupKey-amp-amp-MemtableKey" class="headerlink" title="LookupKey&amp;&amp;MemtableKey"></a>LookupKey&amp;&amp;MemtableKey</h3><p>下面是源码中给出的注释</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">MemTable::Add</span><span class="params">(SequenceNumber s, ValueType type, <span class="keyword">const</span> Slice&amp; key, <span class="keyword">const</span> Slice&amp; value)</span> </span>&#123;  </span><br><span class="line">	<span class="comment">// Format of an entry is concatenation of:  </span></span><br><span class="line">	<span class="comment">//  key_size     : varint32 of internal_key.size()  </span></span><br><span class="line">	<span class="comment">//  key bytes    : char[internal_key.size()]  </span></span><br><span class="line">	<span class="comment">//  value_size   : varint32 of value.size()  </span></span><br><span class="line">	<span class="comment">//  value bytes  : char[value.size()]  ...... &#125; </span></span><br></pre></td></tr></table></figure>
+
+<p>我们可以看到：在InternalKey的头部拼接上InternalKey的长度，即构成MemtableKey。</p>
+<p>LookupKey和MemtableKey格式一致，用于查找。</p>
  
       <!-- reward -->
       
@@ -213,12 +206,12 @@
     <a class="modal-close" href="javascript:;"><i class="ri-close-circle-line"></i></a>
     <p>扫一扫，分享到微信</p>
     <div class="wx-qrcode">
-      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2021/06/17/Virtual-OCSSD-%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA/" alt="微信分享二维码">
+      <img src="//api.qrserver.com/v1/create-qr-code/?size=150x150&data=http://gasolly.github.io/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%945.%E4%B8%8D%E5%90%8C%E7%9A%84%E4%B8%BB%E9%94%AEKey%E7%B1%BB%E5%9E%8B/" alt="微信分享二维码">
     </div>
 </div>
 
 <div id="share-mask"></div>  
-  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/OCSSD/" rel="tag">OCSSD</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/QEMU/" rel="tag">QEMU</a></li></ul>
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/LevelDB/" rel="tag">LevelDB</a></li></ul>
 
     </footer>
   </div>
@@ -226,19 +219,19 @@
    
   <nav class="article-nav">
     
-      <a href="/2022/02/05/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%940.%E5%89%8D%E7%BD%AE%E7%9F%A5%E8%AF%86/" class="article-nav-link">
+      <a href="/2022/02/10/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%946.Sorted%20String%20Table/" class="article-nav-link">
         <strong class="article-nav-caption">上一篇</strong>
         <div class="article-nav-title">
           
-            LevelDB源码分析——0.前置知识
+            LevelDB源码分析——6.Sorted String Table
           
         </div>
       </a>
     
     
-      <a href="/2021/06/17/About-Me/" class="article-nav-link">
+      <a href="/2022/02/09/LevelDB%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E2%80%94%E2%80%944.%E5%86%85%E5%AD%98%E6%95%B0%E6%8D%AE%E5%BA%93/" class="article-nav-link">
         <strong class="article-nav-caption">下一篇</strong>
-        <div class="article-nav-title">About Me</div>
+        <div class="article-nav-title">LevelDB源码分析——4.内存数据库</div>
       </a>
     
   </nav>
